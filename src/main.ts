@@ -21,6 +21,13 @@ const damageFlash = document.getElementById('damage-flash') as HTMLElement;
 const killFeed = document.getElementById('kill-feed') as HTMLElement;
 const deathScreen = document.getElementById('death-screen') as HTMLElement;
 const deathReason = document.getElementById('death-reason') as HTMLElement;
+const btnInvite = document.getElementById('btn-invite') as HTMLElement;
+const btnEndGame = document.getElementById('btn-end-game') as HTMLElement;
+const toastNotice = document.getElementById('toast-notice') as HTMLElement;
+const matchOverScreen = document.getElementById('match-over-screen') as HTMLElement;
+const matchOverSubtitle = document.getElementById('match-over-subtitle') as HTMLElement;
+const finalLeaderboardRows = document.getElementById('final-leaderboard-rows') as HTMLElement;
+const btnPlayAgain = document.getElementById('btn-play-again') as HTMLElement;
 
 // Renderer & World setup
 const { renderer, scene, camera } = createRenderContext(container);
@@ -48,6 +55,8 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 let playerHealth = 100;
 let isPlayerDead = false;
+let isMatchOver = false;
+let currentLeaderboard: LeaderboardEntry[] = [];
 
 function showDamageFlash() {
   damageFlash.style.opacity = '1';
@@ -76,6 +85,7 @@ function addKillFeedMessage(killer: string, victim: string) {
 }
 
 function updateLeaderboard(entries: LeaderboardEntry[]) {
+  currentLeaderboard = entries;
   leaderboardRows.innerHTML = '';
   if (!entries || entries.length === 0) {
     leaderboardRows.innerHTML = '<div class="leaderboard-row"><span>No scores yet</span></div>';
@@ -89,6 +99,38 @@ function updateLeaderboard(entries: LeaderboardEntry[]) {
   });
 }
 
+function showToast(msg: string) {
+  toastNotice.textContent = msg;
+  toastNotice.classList.add('show');
+  setTimeout(() => {
+    toastNotice.classList.remove('show');
+  }, 2500);
+}
+
+function displayMatchOver(enderName: string) {
+  isMatchOver = true;
+  document.exitPointerLock();
+  matchOverSubtitle.textContent = `Match was concluded by ${enderName}.`;
+
+  finalLeaderboardRows.innerHTML = '';
+  if (currentLeaderboard.length === 0) {
+    finalLeaderboardRows.innerHTML = '<div>No player stats recorded yet.</div>';
+  } else {
+    currentLeaderboard.forEach((entry, idx) => {
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.justifyContent = 'space-between';
+      row.style.padding = '4px 0';
+      row.style.borderBottom = '1px solid rgba(255,255,255,0.06)';
+      row.innerHTML = `<span>#${idx + 1} ${entry.name}</span><span style="color: #38bdf8; font-weight: 700;">${entry.score} pts (${entry.kills} Kills / ${entry.deaths} Deaths)</span>`;
+      finalLeaderboardRows.appendChild(row);
+    });
+  }
+
+  matchOverScreen.style.display = 'flex';
+  blocker.style.display = 'none';
+}
+
 // Multiplayer Network Setup
 const network = new NetworkManager(
   scene,
@@ -97,7 +139,7 @@ const network = new NetworkManager(
     playerCountPill.textContent = `${count} ${count === 1 ? 'Player' : 'Players'}`;
   },
   (dmg, attackerName, attackerId) => {
-    if (isPlayerDead) return;
+    if (isPlayerDead || isMatchOver) return;
     playerHealth -= dmg;
     showDamageFlash();
     updateHealthUI();
@@ -111,6 +153,9 @@ const network = new NetworkManager(
   },
   (leaderboard) => {
     updateLeaderboard(leaderboard);
+  },
+  (enderName) => {
+    displayMatchOver(enderName);
   }
 );
 
@@ -118,7 +163,6 @@ function handlePlayerDeath(attackerName: string, attackerId: string) {
   isPlayerDead = true;
   playDeathSound();
 
-  // Send kill announcement across all clients
   network.sendKill(attackerName, attackerId, network.localName, network.localId);
   network.recordDeathInDB();
 
@@ -127,7 +171,7 @@ function handlePlayerDeath(attackerName: string, attackerId: string) {
   blocker.style.display = 'none';
 
   setTimeout(() => {
-    // Respawn local player
+    if (isMatchOver) return;
     const spawn = getRandomSpawn();
     camera.position.set(spawn.x, 1.6, spawn.z);
     playerHealth = 100;
@@ -135,7 +179,6 @@ function handlePlayerDeath(attackerName: string, attackerId: string) {
     updateHealthUI();
     deathScreen.style.display = 'none';
 
-    // Broadcast respawn event to all clients to unhide character at spawn location
     network.sendRespawn(spawn.x, 0, spawn.z);
     network.broadcastPosition(spawn.x, 0, spawn.z, controls.getYaw());
 
@@ -159,12 +202,51 @@ const controls = setupInput(
   renderer.domElement,
   blocker,
   playBtn,
-  () => !isPlayerDead
+  () => !isPlayerDead && !isMatchOver
 );
 const weapon = new WeaponSystem(camera, scene, office, network);
 
-// Bake static shadow map once
 renderer.shadowMap.needsUpdate = true;
+
+// Invite link button
+btnInvite.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const inviteUrl = window.location.href;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(inviteUrl).then(() => {
+      showToast('Invite link copied to clipboard!');
+    }).catch(() => {
+      prompt('Copy this invite link to share:', inviteUrl);
+    });
+  } else {
+    prompt('Copy this invite link to share:', inviteUrl);
+  }
+});
+
+// End Game button
+btnEndGame.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (confirm('Are you sure you want to conclude the match for all players?')) {
+    network.sendEndMatch();
+    displayMatchOver(network.localName);
+  }
+});
+
+// Play Again button
+btnPlayAgain.addEventListener('click', (e) => {
+  e.stopPropagation();
+  isMatchOver = false;
+  matchOverScreen.style.display = 'none';
+
+  const spawn = getRandomSpawn();
+  camera.position.set(spawn.x, 1.6, spawn.z);
+  playerHealth = 100;
+  isPlayerDead = false;
+  updateHealthUI();
+
+  network.sendRespawn(spawn.x, 0, spawn.z);
+  renderer.domElement.requestPointerLock();
+});
 
 // Name input change handler
 playerNameInput.addEventListener('change', () => {
@@ -189,7 +271,7 @@ function animate(currentTime: number) {
   const delta = Math.min((currentTime - lastTime) / 1000, 0.1);
   lastTime = currentTime;
 
-  if (!isPlayerDead) {
+  if (!isPlayerDead && !isMatchOver) {
     controls.setAiming(weapon.isAiming);
     controls.update(delta, (nextPos) => {
       return office.isWalkable(nextPos.x, nextPos.z, 0.35);
@@ -199,8 +281,7 @@ function animate(currentTime: number) {
 
   network.update(delta);
 
-  // Broadcast position (30 ticks/sec ~ 33ms)
-  if (currentTime - lastNetworkSync > 33 && !isPlayerDead) {
+  if (currentTime - lastNetworkSync > 33 && !isPlayerDead && !isMatchOver) {
     network.broadcastPosition(
       camera.position.x,
       camera.position.y - 1.6,
@@ -210,7 +291,6 @@ function animate(currentTime: number) {
     lastNetworkSync = currentTime;
   }
 
-  // Poll database leaderboard periodically (every 5s)
   if (currentTime - lastLeaderboardPoll > 5000) {
     network.fetchLeaderboard();
     lastLeaderboardPoll = currentTime;
@@ -218,7 +298,6 @@ function animate(currentTime: number) {
 
   renderer.render(scene, camera);
 
-  // FPS & Position stats
   frames++;
   if (currentTime - lastFpsUpdate >= 500) {
     const fps = Math.round((frames * 1000) / (currentTime - lastFpsUpdate));

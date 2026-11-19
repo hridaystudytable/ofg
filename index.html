@@ -112,6 +112,7 @@
         display: flex;
         align-items: center;
         gap: 12px;
+        pointer-events: auto;
       }
       .badge-status {
         display: inline-flex;
@@ -139,6 +140,59 @@
         height: 6px;
         border-radius: 50%;
         background-color: currentColor;
+      }
+
+      /* Invite & End Buttons */
+      .hud-btn-action {
+        background: rgba(56, 189, 248, 0.15);
+        border: 1px solid rgba(56, 189, 248, 0.35);
+        color: var(--accent-blue);
+        font-family: 'Plus Jakarta Sans', sans-serif;
+        font-size: 12px;
+        font-weight: 700;
+        padding: 6px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        transition: all 0.2s;
+      }
+      .hud-btn-action:hover {
+        background: rgba(56, 189, 248, 0.3);
+        transform: translateY(-1px);
+      }
+      .hud-btn-danger {
+        background: rgba(239, 68, 68, 0.15);
+        border-color: rgba(239, 68, 68, 0.35);
+        color: var(--accent-red);
+      }
+      .hud-btn-danger:hover {
+        background: rgba(239, 68, 68, 0.3);
+      }
+
+      /* Toast Notification for Invite Link */
+      #toast-notice {
+        position: fixed;
+        top: 72px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: #10b981;
+        color: #fff;
+        font-family: 'Plus Jakarta Sans', sans-serif;
+        font-size: 13px;
+        font-weight: 700;
+        padding: 8px 18px;
+        border-radius: 30px;
+        box-shadow: 0 8px 24px rgba(16, 185, 129, 0.4);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.25s, transform 0.25s;
+        z-index: 100;
+      }
+      #toast-notice.show {
+        opacity: 1;
+        transform: translateX(-50%) translateY(4px);
       }
 
       /* Leaderboard Mini Overlay */
@@ -268,7 +322,56 @@
         color: #fca5a5;
       }
 
-      /* Simplified Profile & Enter Arena Modal */
+      /* Match Over / Victory Modal */
+      #match-over-screen {
+        position: fixed;
+        inset: 0;
+        background: rgba(11, 15, 23, 0.92);
+        backdrop-filter: blur(16px);
+        display: none;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        z-index: 60;
+        color: #fff;
+      }
+      .match-over-card {
+        background: rgba(18, 24, 38, 0.95);
+        border: 1px solid var(--border-glass);
+        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.5);
+        padding: 36px 44px;
+        border-radius: 16px;
+        max-width: 480px;
+        width: 90%;
+        text-align: center;
+      }
+      .match-over-card h1 {
+        font-size: 32px;
+        font-weight: 800;
+        letter-spacing: 1px;
+        color: var(--accent-amber);
+        margin-bottom: 8px;
+      }
+      .match-over-card p {
+        color: var(--text-muted);
+        font-size: 14px;
+        margin-bottom: 24px;
+      }
+      .final-stats {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+        padding: 16px;
+        margin-bottom: 24px;
+        text-align: left;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 13px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      /* Enter Arena & Player Name Modal */
       #blocker {
         position: fixed;
         inset: 0;
@@ -386,6 +489,9 @@
     <div class="vignette"></div>
     <div id="damage-flash"></div>
 
+    <!-- Toast Notice -->
+    <div id="toast-notice">Invite link copied to clipboard!</div>
+
     <!-- Reticle -->
     <div id="crosshair">
       <div class="reticle-dot"></div>
@@ -406,9 +512,14 @@
         <span id="player-count-pill" style="color: var(--text-muted); font-size: 12px;">1 Player</span>
       </div>
 
-      <div class="hud-card">
-        <span id="pos-info" style="color: var(--text-muted);">Pos: 0, 0</span>
-        <span id="fps-counter" style="color: var(--accent-emerald); font-weight: 600;">60 FPS</span>
+      <div class="hud-card" style="gap: 8px;">
+        <button id="btn-invite" class="hud-btn-action">
+          <span>&plus; Invite Link</span>
+        </button>
+        <button id="btn-end-game" class="hud-btn-action hud-btn-danger">
+          <span>End Match</span>
+        </button>
+        <span id="fps-counter" style="color: var(--accent-emerald); font-weight: 600; margin-left: 6px;">60 FPS</span>
       </div>
     </div>
 
@@ -446,6 +557,23 @@
     <div id="death-screen">
       <h2>YOU WERE ELIMINATED</h2>
       <p id="death-reason">Respawning in office in 3s...</p>
+    </div>
+
+    <!-- End Game / Match Summary Modal -->
+    <div id="match-over-screen">
+      <div class="match-over-card">
+        <h1>MATCH CONCLUDED</h1>
+        <p id="match-over-subtitle">The match was concluded by an agent.</p>
+
+        <div class="final-stats">
+          <div style="color: var(--accent-blue); font-weight: 700; margin-bottom: 4px;">FINAL LEADERBOARD</div>
+          <div id="final-leaderboard-rows">
+            <div>No match data.</div>
+          </div>
+        </div>
+
+        <button id="btn-play-again" class="play-btn">START NEW ROUND</button>
+      </div>
     </div>
 
     <!-- Enter Arena & Player Name Modal -->

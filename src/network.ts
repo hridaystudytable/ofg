@@ -29,6 +29,7 @@ export class NetworkManager {
   private onLocalDamaged?: (amount: number, attackerName: string, attackerId: string) => void;
   private onKillFeed?: (killer: string, victim: string) => void;
   private onLeaderboardUpdate?: (leaderboard: LeaderboardEntry[]) => void;
+  private onMatchEnded?: (enderName: string) => void;
 
   constructor(
     scene: Scene,
@@ -36,13 +37,15 @@ export class NetworkManager {
     onPlayerCountChange?: (count: number) => void,
     onLocalDamaged?: (amount: number, attackerName: string, attackerId: string) => void,
     onKillFeed?: (killer: string, victim: string) => void,
-    onLeaderboardUpdate?: (leaderboard: LeaderboardEntry[]) => void
+    onLeaderboardUpdate?: (leaderboard: LeaderboardEntry[]) => void,
+    onMatchEnded?: (enderName: string) => void
   ) {
     this.scene = scene;
     this.onPlayerCountChange = onPlayerCountChange;
     this.onLocalDamaged = onLocalDamaged;
     this.onKillFeed = onKillFeed;
     this.onLeaderboardUpdate = onLeaderboardUpdate;
+    this.onMatchEnded = onMatchEnded;
     this.localId = 'usr_' + Math.random().toString(36).substring(2, 9);
     this.localName = initialName || 'Agent-' + this.localId.substring(4, 7).toUpperCase();
   }
@@ -142,14 +145,13 @@ export class NetworkManager {
         }
       });
 
-      // Kill announcements & death visibility sync
+      // Kill announcements
       this.channel.on('broadcast', { event: 'kill' }, (payload) => {
         const data = payload.payload as { killer: string; killerId: string; victim: string; victimId: string };
         if (data) {
           this.onKillFeed?.(data.killer, data.victim);
           const remoteTarget = this.remotePlayers.get(data.victimId);
           if (remoteTarget) {
-            // Mark remote player dead immediately on all clients
             remoteTarget.setDead(true);
           }
           setTimeout(() => this.fetchLeaderboard(), 400);
@@ -165,6 +167,14 @@ export class NetworkManager {
             remoteTarget.teleport(new Vector3(data.p[0], data.p[1], data.p[2]), 0);
             remoteTarget.setDead(false);
           }
+        }
+      });
+
+      // End Game broadcast
+      this.channel.on('broadcast', { event: 'end_match' }, (payload) => {
+        const data = payload.payload as { enderName: string };
+        if (data) {
+          this.onMatchEnded?.(data.enderName || 'An agent');
         }
       });
 
@@ -194,7 +204,6 @@ export class NetworkManager {
     }
   }
 
-  // Database persistence
   private async syncPlayerProfileToDB() {
     if (!this.client) return;
     try {
@@ -345,6 +354,18 @@ export class NetworkManager {
           Math.round(y * 100) / 100,
           Math.round(z * 100) / 100
         ]
+      }
+    });
+  }
+
+  public sendEndMatch() {
+    if (!this.channel || !this.isConnected) return;
+
+    this.channel.send({
+      type: 'broadcast',
+      event: 'end_match',
+      payload: {
+        enderName: this.localName
       }
     });
   }
