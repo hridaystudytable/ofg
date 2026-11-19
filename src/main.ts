@@ -2,7 +2,7 @@ import { createRenderContext } from './renderer';
 import { setupInput } from './input';
 import { buildOffice } from './office';
 import { WeaponSystem } from './weapon';
-import { NetworkManager, LeaderboardEntry } from './network';
+import { NetworkManager, MatchScoreEntry } from './network';
 import { playDeathSound } from './audio';
 
 // DOM Elements
@@ -13,6 +13,7 @@ const fpsCounter = document.getElementById('fps-counter') as HTMLElement;
 const posInfo = document.getElementById('pos-info') as HTMLElement;
 const networkBadge = document.getElementById('network-badge') as HTMLElement;
 const networkStatusText = document.getElementById('network-status-text') as HTMLElement;
+const matchTimerPill = document.getElementById('match-timer-pill') as HTMLElement;
 const playerCountPill = document.getElementById('player-count-pill') as HTMLElement;
 const playerNameInput = document.getElementById('player-name-input') as HTMLInputElement;
 const leaderboardRows = document.getElementById('leaderboard-rows') as HTMLElement;
@@ -23,8 +24,11 @@ const deathScreen = document.getElementById('death-screen') as HTMLElement;
 const deathReason = document.getElementById('death-reason') as HTMLElement;
 const btnInvite = document.getElementById('btn-invite') as HTMLElement;
 const btnEndGame = document.getElementById('btn-end-game') as HTMLElement;
+const modalBtnInvite = document.getElementById('modal-btn-invite') as HTMLElement;
+const modalBtnEnd = document.getElementById('modal-btn-end') as HTMLElement;
 const toastNotice = document.getElementById('toast-notice') as HTMLElement;
 const matchOverScreen = document.getElementById('match-over-screen') as HTMLElement;
+const resultBanner = document.getElementById('result-banner') as HTMLElement;
 const matchOverSubtitle = document.getElementById('match-over-subtitle') as HTMLElement;
 const finalLeaderboardRows = document.getElementById('final-leaderboard-rows') as HTMLElement;
 const btnPlayAgain = document.getElementById('btn-play-again') as HTMLElement;
@@ -56,7 +60,26 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 let playerHealth = 100;
 let isPlayerDead = false;
 let isMatchOver = false;
-let currentLeaderboard: LeaderboardEntry[] = [];
+let currentMatchScores: MatchScoreEntry[] = [];
+
+// 5-Minute Match Timer (300 seconds)
+const MATCH_DURATION = 300;
+let matchRemainingSeconds = MATCH_DURATION;
+
+function formatTime(totalSeconds: number): string {
+  const mins = Math.floor(Math.max(0, totalSeconds) / 60);
+  const secs = Math.floor(Math.max(0, totalSeconds) % 60);
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+}
+
+function updateTimerDisplay() {
+  matchTimerPill.textContent = formatTime(matchRemainingSeconds);
+  if (matchRemainingSeconds <= 30) {
+    matchTimerPill.classList.add('timer-low');
+  } else {
+    matchTimerPill.classList.remove('timer-low');
+  }
+}
 
 function showDamageFlash() {
   damageFlash.style.opacity = '1';
@@ -84,8 +107,8 @@ function addKillFeedMessage(killer: string, victim: string) {
   }, 4000);
 }
 
-function updateLeaderboard(entries: LeaderboardEntry[]) {
-  currentLeaderboard = entries;
+function updateLeaderboard(entries: MatchScoreEntry[]) {
+  currentMatchScores = entries;
   leaderboardRows.innerHTML = '';
   if (!entries || entries.length === 0) {
     leaderboardRows.innerHTML = '<div class="leaderboard-row"><span>No scores yet</span></div>';
@@ -107,22 +130,42 @@ function showToast(msg: string) {
   }, 2500);
 }
 
-function displayMatchOver(enderName: string) {
+// Conclusion screen: Top 1 = VICTORY, Rest = DEFEAT
+function displayMatchOver(enderName: string, reason?: string) {
   isMatchOver = true;
   document.exitPointerLock();
-  matchOverSubtitle.textContent = `Match was concluded by ${enderName}.`;
+
+  const topPlayer = currentMatchScores.length > 0 ? currentMatchScores[0] : null;
+  const isLocalWinner = topPlayer && topPlayer.id === network.localId && topPlayer.score > 0;
+
+  if (isLocalWinner) {
+    resultBanner.textContent = 'VICTORY';
+    resultBanner.className = 'banner-victory';
+    matchOverSubtitle.textContent = reason === 'manual' 
+      ? `Match concluded by ${enderName}. You finished #1 as Champion!`
+      : `5-minute match expired! You finished #1 as Champion!`;
+  } else {
+    resultBanner.textContent = 'DEFEAT';
+    resultBanner.className = 'banner-defeat';
+    matchOverSubtitle.textContent = topPlayer && topPlayer.score > 0
+      ? `Winner: ${topPlayer.name} with ${topPlayer.score} pts. Better luck next round!`
+      : (reason === 'manual' ? `Match concluded by ${enderName}.` : `5-minute time limit expired.`);
+  }
 
   finalLeaderboardRows.innerHTML = '';
-  if (currentLeaderboard.length === 0) {
-    finalLeaderboardRows.innerHTML = '<div>No player stats recorded yet.</div>';
+  if (currentMatchScores.length === 0) {
+    finalLeaderboardRows.innerHTML = '<div>No match scores recorded.</div>';
   } else {
-    currentLeaderboard.forEach((entry, idx) => {
+    currentMatchScores.forEach((entry, idx) => {
+      const isWinner = idx === 0 && entry.score > 0;
       const row = document.createElement('div');
       row.style.display = 'flex';
       row.style.justifyContent = 'space-between';
-      row.style.padding = '4px 0';
+      row.style.padding = '5px 0';
       row.style.borderBottom = '1px solid rgba(255,255,255,0.06)';
-      row.innerHTML = `<span>#${idx + 1} ${entry.name}</span><span style="color: #38bdf8; font-weight: 700;">${entry.score} pts (${entry.kills} Kills / ${entry.deaths} Deaths)</span>`;
+      const badge = isWinner ? ' 👑 [WINNER]' : '';
+      const color = isWinner ? '#10b981' : (entry.id === network.localId ? '#38bdf8' : '#e2e8f0');
+      row.innerHTML = `<span style="color: ${color}; font-weight: 700;">#${idx + 1} ${entry.name}${badge}</span><span style="color: #38bdf8; font-weight: 700;">${entry.score} pts (${entry.kills}K / ${entry.deaths}D)</span>`;
       finalLeaderboardRows.appendChild(row);
     });
   }
@@ -154,8 +197,12 @@ const network = new NetworkManager(
   (leaderboard) => {
     updateLeaderboard(leaderboard);
   },
-  (enderName) => {
-    displayMatchOver(enderName);
+  (enderName, reason) => {
+    displayMatchOver(enderName, reason);
+  },
+  (newRemainingSec) => {
+    matchRemainingSeconds = newRemainingSec;
+    updateTimerDisplay();
   }
 );
 
@@ -164,7 +211,6 @@ function handlePlayerDeath(attackerName: string, attackerId: string) {
   playDeathSound();
 
   network.sendKill(attackerName, attackerId, network.localName, network.localId);
-  network.recordDeathInDB();
 
   deathReason.textContent = `Eliminated by ${attackerName}. Respawning in 3s...`;
   deathScreen.style.display = 'flex';
@@ -208,8 +254,19 @@ const weapon = new WeaponSystem(camera, scene, office, network);
 
 renderer.shadowMap.needsUpdate = true;
 
-// Invite link button
-btnInvite.addEventListener('click', (e) => {
+// End Game button handler
+const handleEndGame = (e: Event) => {
+  e.stopPropagation();
+  if (confirm('Are you sure you want to conclude the match for all players?')) {
+    network.sendEndMatch('manual');
+    displayMatchOver(network.localName, 'manual');
+  }
+};
+btnEndGame.addEventListener('click', handleEndGame);
+modalBtnEnd.addEventListener('click', handleEndGame);
+
+// Invite link button handler
+const handleInvite = (e: Event) => {
   e.stopPropagation();
   const inviteUrl = window.location.href;
   if (navigator.clipboard) {
@@ -221,22 +278,20 @@ btnInvite.addEventListener('click', (e) => {
   } else {
     prompt('Copy this invite link to share:', inviteUrl);
   }
-});
+};
+btnInvite.addEventListener('click', handleInvite);
+modalBtnInvite.addEventListener('click', handleInvite);
 
-// End Game button
-btnEndGame.addEventListener('click', (e) => {
-  e.stopPropagation();
-  if (confirm('Are you sure you want to conclude the match for all players?')) {
-    network.sendEndMatch();
-    displayMatchOver(network.localName);
-  }
-});
-
-// Play Again button
+// Play Again / Start New Round button
 btnPlayAgain.addEventListener('click', (e) => {
   e.stopPropagation();
   isMatchOver = false;
   matchOverScreen.style.display = 'none';
+
+  // Reset 5-minute timer and scores for new round
+  matchRemainingSeconds = MATCH_DURATION;
+  updateTimerDisplay();
+  network.resetMatchScores();
 
   const spawn = getRandomSpawn();
   camera.position.set(spawn.x, 1.6, spawn.z);
@@ -258,7 +313,7 @@ playerNameInput.addEventListener('change', () => {
 });
 
 let lastNetworkSync = 0;
-let lastLeaderboardPoll = 0;
+let lastTimerTick = performance.now();
 
 // Performance loop
 let lastTime = performance.now();
@@ -270,6 +325,21 @@ function animate(currentTime: number) {
 
   const delta = Math.min((currentTime - lastTime) / 1000, 0.1);
   lastTime = currentTime;
+
+  // 1-second interval timer countdown
+  if (!isMatchOver && currentTime - lastTimerTick >= 1000) {
+    matchRemainingSeconds -= 1;
+    updateTimerDisplay();
+    lastTimerTick = currentTime;
+
+    // When 5 minutes expire: conclude match automatically
+    if (matchRemainingSeconds <= 0) {
+      matchRemainingSeconds = 0;
+      updateTimerDisplay();
+      network.sendEndMatch('time_up');
+      displayMatchOver('Timer Expired', 'time_up');
+    }
+  }
 
   if (!isPlayerDead && !isMatchOver) {
     controls.setAiming(weapon.isAiming);
@@ -289,11 +359,6 @@ function animate(currentTime: number) {
       controls.getYaw()
     );
     lastNetworkSync = currentTime;
-  }
-
-  if (currentTime - lastLeaderboardPoll > 5000) {
-    network.fetchLeaderboard();
-    lastLeaderboardPoll = currentTime;
   }
 
   renderer.render(scene, camera);

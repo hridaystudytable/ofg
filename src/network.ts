@@ -9,7 +9,7 @@ export interface PlayerState {
   color: number;
 }
 
-export interface LeaderboardEntry {
+export interface MatchScoreEntry {
   id: string;
   name: string;
   kills: number;
@@ -25,11 +25,14 @@ export class NetworkManager {
   public isConnected = false;
   private scene: Scene;
   private remotePlayers = new Map<string, RemotePlayer>();
+  private matchScores = new Map<string, MatchScoreEntry>();
+
   private onPlayerCountChange?: (count: number) => void;
   private onLocalDamaged?: (amount: number, attackerName: string, attackerId: string) => void;
   private onKillFeed?: (killer: string, victim: string) => void;
-  private onLeaderboardUpdate?: (leaderboard: LeaderboardEntry[]) => void;
-  private onMatchEnded?: (enderName: string) => void;
+  private onLeaderboardUpdate?: (leaderboard: MatchScoreEntry[]) => void;
+  private onMatchEnded?: (enderName: string, reason?: string) => void;
+  private onTimerSync?: (remainingSec: number) => void;
 
   constructor(
     scene: Scene,
@@ -37,8 +40,9 @@ export class NetworkManager {
     onPlayerCountChange?: (count: number) => void,
     onLocalDamaged?: (amount: number, attackerName: string, attackerId: string) => void,
     onKillFeed?: (killer: string, victim: string) => void,
-    onLeaderboardUpdate?: (leaderboard: LeaderboardEntry[]) => void,
-    onMatchEnded?: (enderName: string) => void
+    onLeaderboardUpdate?: (leaderboard: MatchScoreEntry[]) => void,
+    onMatchEnded?: (enderName: string, reason?: string) => void,
+    onTimerSync?: (remainingSec: number) => void
   ) {
     this.scene = scene;
     this.onPlayerCountChange = onPlayerCountChange;
@@ -46,12 +50,25 @@ export class NetworkManager {
     this.onKillFeed = onKillFeed;
     this.onLeaderboardUpdate = onLeaderboardUpdate;
     this.onMatchEnded = onMatchEnded;
+    this.onTimerSync = onTimerSync;
     this.localId = 'usr_' + Math.random().toString(36).substring(2, 9);
     this.localName = initialName || 'Agent-' + this.localId.substring(4, 7).toUpperCase();
+
+    this.matchScores.set(this.localId, {
+      id: this.localId,
+      name: this.localName,
+      kills: 0,
+      deaths: 0,
+      score: 0
+    });
   }
 
   public setName(name: string) {
     this.localName = name.trim() || 'Agent-' + this.localId.substring(4, 7).toUpperCase();
+    const entry = this.matchScores.get(this.localId);
+    if (entry) {
+      entry.name = this.localName;
+    }
     if (this.isConnected && this.channel) {
       this.channel.track({
         id: this.localId,
@@ -59,6 +76,7 @@ export class NetworkManager {
         color: 0x3b82f6
       });
       this.syncPlayerProfileToDB();
+      this.notifyLeaderboardChange();
     }
   }
 
@@ -103,6 +121,18 @@ export class NetworkManager {
             } else if (data.name) {
               player.name = data.name;
             }
+
+            if (!this.matchScores.has(key)) {
+              this.matchScores.set(key, {
+                id: key,
+                name: data.name || 'Agent',
+                kills: 0,
+                deaths: 0,
+                score: 0
+              });
+            } else if (data.name) {
+              this.matchScores.get(key)!.name = data.name;
+            }
           }
         }
 
@@ -114,6 +144,7 @@ export class NetworkManager {
         }
 
         this.onPlayerCountChange?.(this.remotePlayers.size + 1);
+        this.notifyLeaderboardChange();
       });
 
       // Position sync broadcast (30Hz tick)
@@ -145,16 +176,45 @@ export class NetworkManager {
         }
       });
 
-      // Kill announcements
+      // Kill announcements & per-match score updates
       this.channel.on('broadcast', { event: 'kill' }, (payload) => {
         const data = payload.payload as { killer: string; killerId: string; victim: string; victimId: string };
         if (data) {
           this.onKillFeed?.(data.killer, data.victim);
+
+          const killerEntry = this.matchScores.get(data.killerId);
+          if (killerEntry) {
+            killerEntry.kills += 1;
+            killerEntry.score += 100;
+          } else {
+            this.matchScores.set(data.killerId, {
+              id: data.killerId,
+              name: data.killer,
+              kills: 1,
+              deaths: 0,
+              score: 100
+            });
+          }
+
+          const victimEntry = this.matchScores.get(data.victimId);
+          if (victimEntry) {
+            victimEntry.deaths += 1;
+          } else {
+            this.matchScores.set(data.victimId, {
+              id: data.victimId,
+              name: data.victim,
+              kills: 0,
+              deaths: 1,
+              score: 0
+            });
+          }
+
           const remoteTarget = this.remotePlayers.get(data.victimId);
           if (remoteTarget) {
             remoteTarget.setDead(true);
           }
-          setTimeout(() => this.fetchLeaderboard(), 400);
+
+          this.notifyLeaderboardChange();
         }
       });
 
@@ -172,19 +232,20 @@ export class NetworkManager {
 
       // End Game broadcast
       this.channel.on('broadcast', { event: 'end_match' }, (payload) => {
-        const data = payload.payload as { enderName: string };
+        const data = payload.payload as { enderName: string; reason?: string };
         if (data) {
-          this.onMatchEnded?.(data.enderName || 'An agent');
+          this.onMatchEnded?.(data.enderName || 'Time', data.reason);
         }
       });
 
-      // Listen for database changes on players table
-      this.client
-        .channel('db-changes')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, () => {
-          this.fetchLeaderboard();
-        })
-        .subscribe();
+      // Reset Match scores & timer broadcast
+      this.channel.on('broadcast', { event: 'reset_match' }, (payload) => {
+        const data = payload.payload as { startTime?: number };
+        this.resetMatchScoresLocally();
+        if (data && data.startTime) {
+          this.onTimerSync?.(300);
+        }
+      });
 
       this.channel.subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
@@ -195,13 +256,44 @@ export class NetworkManager {
             color: 0x3b82f6
           });
           this.syncPlayerProfileToDB();
-          this.fetchLeaderboard();
+          this.notifyLeaderboardChange();
           this.onPlayerCountChange?.(this.remotePlayers.size + 1);
         }
       });
     } catch (e) {
       console.error('Failed to initialize Supabase Realtime channel:', e);
     }
+  }
+
+  public resetMatchScores() {
+    this.resetMatchScoresLocally();
+    if (this.channel && this.isConnected) {
+      this.channel.send({
+        type: 'broadcast',
+        event: 'reset_match',
+        payload: {
+          startTime: Date.now()
+        }
+      });
+    }
+  }
+
+  private resetMatchScoresLocally() {
+    for (const entry of this.matchScores.values()) {
+      entry.kills = 0;
+      entry.deaths = 0;
+      entry.score = 0;
+    }
+    this.notifyLeaderboardChange();
+  }
+
+  private notifyLeaderboardChange() {
+    if (!this.onLeaderboardUpdate) return;
+    const sorted = Array.from(this.matchScores.values()).sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return b.kills - a.kills;
+    });
+    this.onLeaderboardUpdate(sorted);
   }
 
   private async syncPlayerProfileToDB() {
@@ -212,80 +304,6 @@ export class NetworkManager {
         name: this.localName,
         last_seen: new Date().toISOString()
       }, { onConflict: 'id' });
-    } catch {
-      // Graceful
-    }
-  }
-
-  public async recordKillInDB(killerId: string, killerName: string, victimId: string, victimName: string) {
-    if (!this.client) return;
-    try {
-      await this.client.from('match_events').insert({
-        killer_id: killerId,
-        killer_name: killerName,
-        victim_id: victimId,
-        victim_name: victimName
-      });
-
-      const { data } = await this.client
-        .from('players')
-        .select('kills, score')
-        .eq('id', killerId)
-        .maybeSingle();
-
-      const newKills = ((data?.kills) || 0) + 1;
-      const newScore = ((data?.score) || 0) + 100;
-
-      await this.client.from('players').upsert({
-        id: killerId,
-        name: killerName,
-        kills: newKills,
-        score: newScore,
-        last_seen: new Date().toISOString()
-      }, { onConflict: 'id' });
-
-      this.fetchLeaderboard();
-    } catch (err) {
-      console.warn('Error recording kill in DB:', err);
-    }
-  }
-
-  public async recordDeathInDB() {
-    if (!this.client) return;
-    try {
-      const { data } = await this.client
-        .from('players')
-        .select('deaths')
-        .eq('id', this.localId)
-        .maybeSingle();
-
-      const newDeaths = ((data?.deaths) || 0) + 1;
-
-      await this.client.from('players').upsert({
-        id: this.localId,
-        name: this.localName,
-        deaths: newDeaths,
-        last_seen: new Date().toISOString()
-      }, { onConflict: 'id' });
-
-      this.fetchLeaderboard();
-    } catch (err) {
-      console.warn('Error recording death in DB:', err);
-    }
-  }
-
-  public async fetchLeaderboard() {
-    if (!this.client || !this.onLeaderboardUpdate) return;
-    try {
-      const { data } = await this.client
-        .from('players')
-        .select('id, name, kills, deaths, score')
-        .order('score', { ascending: false })
-        .limit(5);
-
-      if (data && data.length > 0) {
-        this.onLeaderboardUpdate(data as LeaderboardEntry[]);
-      }
     } catch {
       // Graceful
     }
@@ -338,7 +356,16 @@ export class NetworkManager {
       }
     });
 
-    this.recordKillInDB(killerId, killerName, victimId, victimName);
+    const killerEntry = this.matchScores.get(killerId);
+    if (killerEntry) {
+      killerEntry.kills += 1;
+      killerEntry.score += 100;
+    }
+    const victimEntry = this.matchScores.get(victimId);
+    if (victimEntry) {
+      victimEntry.deaths += 1;
+    }
+    this.notifyLeaderboardChange();
   }
 
   public sendRespawn(x: number, y: number, z: number) {
@@ -358,14 +385,15 @@ export class NetworkManager {
     });
   }
 
-  public sendEndMatch() {
+  public sendEndMatch(reason = 'time_up') {
     if (!this.channel || !this.isConnected) return;
 
     this.channel.send({
       type: 'broadcast',
       event: 'end_match',
       payload: {
-        enderName: this.localName
+        enderName: this.localName,
+        reason
       }
     });
   }

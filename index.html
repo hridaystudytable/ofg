@@ -142,6 +142,28 @@
         background-color: currentColor;
       }
 
+      /* Match Timer Pill */
+      #match-timer-pill {
+        background: rgba(245, 158, 11, 0.18);
+        border: 1px solid rgba(245, 158, 11, 0.4);
+        color: #fde68a;
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-weight: 700;
+        font-size: 13px;
+        letter-spacing: 1px;
+      }
+      .timer-low {
+        background: rgba(239, 68, 68, 0.25) !important;
+        border-color: rgba(239, 68, 68, 0.6) !important;
+        color: #fca5a5 !important;
+        animation: pulseWarning 1s infinite;
+      }
+      @keyframes pulseWarning {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+      }
+
       /* Invite & End Buttons */
       .hud-btn-action {
         background: rgba(56, 189, 248, 0.15);
@@ -213,7 +235,7 @@
         display: flex;
         flex-direction: column;
         gap: 6px;
-        min-width: 170px;
+        min-width: 180px;
       }
       .leaderboard-title {
         color: var(--accent-blue);
@@ -322,12 +344,12 @@
         color: #fca5a5;
       }
 
-      /* Match Over / Victory Modal */
+      /* Victory / Defeat Match Conclusion Modal */
       #match-over-screen {
         position: fixed;
         inset: 0;
-        background: rgba(11, 15, 23, 0.92);
-        backdrop-filter: blur(16px);
+        background: rgba(11, 15, 23, 0.94);
+        backdrop-filter: blur(18px);
         display: none;
         flex-direction: column;
         justify-content: center;
@@ -336,32 +358,40 @@
         color: #fff;
       }
       .match-over-card {
-        background: rgba(18, 24, 38, 0.95);
+        background: rgba(18, 24, 38, 0.98);
         border: 1px solid var(--border-glass);
-        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.5);
-        padding: 36px 44px;
-        border-radius: 16px;
-        max-width: 480px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+        padding: 38px 48px;
+        border-radius: 20px;
+        max-width: 520px;
         width: 90%;
         text-align: center;
       }
-      .match-over-card h1 {
-        font-size: 32px;
-        font-weight: 800;
-        letter-spacing: 1px;
-        color: var(--accent-amber);
-        margin-bottom: 8px;
+      #result-banner {
+        font-size: 44px;
+        font-weight: 900;
+        letter-spacing: 2px;
+        margin-bottom: 6px;
+        text-transform: uppercase;
       }
-      .match-over-card p {
+      .banner-victory {
+        color: #10b981;
+        text-shadow: 0 0 24px rgba(16, 185, 129, 0.6);
+      }
+      .banner-defeat {
+        color: #ef4444;
+        text-shadow: 0 0 24px rgba(239, 68, 68, 0.6);
+      }
+      #match-over-subtitle {
         color: var(--text-muted);
-        font-size: 14px;
-        margin-bottom: 24px;
+        font-size: 15px;
+        margin-bottom: 22px;
       }
       .final-stats {
         background: rgba(255, 255, 255, 0.04);
         border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 10px;
-        padding: 16px;
+        border-radius: 12px;
+        padding: 18px;
         margin-bottom: 24px;
         text-align: left;
         font-family: 'JetBrains Mono', monospace;
@@ -509,6 +539,7 @@
           <span class="status-pulse"></span>
           <span id="network-status-text">Online Arena</span>
         </span>
+        <span id="match-timer-pill">05:00</span>
         <span id="player-count-pill" style="color: var(--text-muted); font-size: 12px;">1 Player</span>
       </div>
 
@@ -525,7 +556,7 @@
 
     <!-- Leaderboard Card -->
     <div id="leaderboard-card">
-      <div class="leaderboard-title">TOP AGENTS</div>
+      <div class="leaderboard-title">MATCH SCOREBOARD</div>
       <div id="leaderboard-rows">
         <div class="leaderboard-row"><span>Syncing...</span></div>
       </div>
@@ -549,7 +580,7 @@
       </div>
 
       <div class="hud-card" style="font-size: 11px; color: var(--text-muted);">
-        Tree-Shaken Three.js &bull; Supabase Live
+        5 Min Battle &bull; Top 1 Wins
       </div>
     </div>
 
@@ -559,20 +590,20 @@
       <p id="death-reason">Respawning in office in 3s...</p>
     </div>
 
-    <!-- End Game / Match Summary Modal -->
+    <!-- Victory / Defeat Match Conclusion Modal -->
     <div id="match-over-screen">
       <div class="match-over-card">
-        <h1>MATCH CONCLUDED</h1>
-        <p id="match-over-subtitle">The match was concluded by an agent.</p>
+        <div id="result-banner" class="banner-victory">VICTORY</div>
+        <p id="match-over-subtitle">You finished #1 in the office arena.</p>
 
         <div class="final-stats">
-          <div style="color: var(--accent-blue); font-weight: 700; margin-bottom: 4px;">FINAL LEADERBOARD</div>
+          <div style="color: var(--accent-blue); font-weight: 700; margin-bottom: 4px;">FINAL ROUND SCOREBOARD</div>
           <div id="final-leaderboard-rows">
             <div>No match data.</div>
           </div>
         </div>
 
-        <button id="btn-play-again" class="play-btn">START NEW ROUND</button>
+        <button id="btn-play-again" class="play-btn">START NEXT 5-MIN MATCH</button>
       </div>
     </div>
 
@@ -580,7 +611,7 @@
     <div id="blocker">
       <div class="modal-card">
         <h1>OFFICE STRIKE</h1>
-        <p class="subtitle">Online tactical arena. Choose your agent codename to enter.</p>
+        <p class="subtitle">5-minute deathmatch arena. Top 1 wins, rest defeat.</p>
 
         <div class="form-group">
           <label for="player-name-input">Your Agent Codename</label>
@@ -592,7 +623,16 @@
           <div class="control-item"><span class="keycap">MOUSE</span> Camera Look</div>
           <div class="control-item"><span class="keycap">LEFT CLICK</span> Fire (25 DMG)</div>
           <div class="control-item"><span class="keycap">RIGHT CLICK</span> Aim Scope (ADS)</div>
-          <div class="control-item"><span class="keycap">ESC</span> Pause / Name</div>
+          <div class="control-item"><span class="keycap">ESC</span> Free Cursor (Top Bar)</div>
+        </div>
+
+        <div style="display: flex; gap: 10px; margin-bottom: 12px;">
+          <button id="modal-btn-invite" type="button" class="hud-btn-action" style="flex: 1; justify-content: center; padding: 10px;">
+            <span>&plus; Invite Link</span>
+          </button>
+          <button id="modal-btn-end" type="button" class="hud-btn-action hud-btn-danger" style="flex: 1; justify-content: center; padding: 10px;">
+            <span>End Match</span>
+          </button>
         </div>
 
         <button id="play-btn" class="play-btn">ENTER OFFICE ARENA</button>
