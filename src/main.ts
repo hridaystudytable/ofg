@@ -77,10 +77,14 @@ function addKillFeedMessage(killer: string, victim: string) {
 
 function updateLeaderboard(entries: LeaderboardEntry[]) {
   leaderboardRows.innerHTML = '';
+  if (!entries || entries.length === 0) {
+    leaderboardRows.innerHTML = '<div class="leaderboard-row"><span>No scores yet</span></div>';
+    return;
+  }
   entries.forEach((e) => {
     const row = document.createElement('div');
     row.className = 'leaderboard-row';
-    row.innerHTML = `<span>${e.name}</span><span style="color: #38bdf8; font-weight: 600;">${e.score} pts</span>`;
+    row.innerHTML = `<span>${e.name || 'Agent'}</span><span style="color: #38bdf8; font-weight: 600;">${e.score} pts (${e.kills}K)</span>`;
     leaderboardRows.appendChild(row);
   });
 }
@@ -92,14 +96,14 @@ const network = new NetworkManager(
   (count) => {
     playerCountPill.textContent = `${count} ${count === 1 ? 'Player' : 'Players'}`;
   },
-  (dmg, attackerName) => {
+  (dmg, attackerName, attackerId) => {
     if (isPlayerDead) return;
     playerHealth -= dmg;
     showDamageFlash();
     updateHealthUI();
 
     if (playerHealth <= 0) {
-      handlePlayerDeath(attackerName);
+      handlePlayerDeath(attackerName, attackerId);
     }
   },
   (killer, victim) => {
@@ -110,23 +114,32 @@ const network = new NetworkManager(
   }
 );
 
-function handlePlayerDeath(attackerName: string) {
+function handlePlayerDeath(attackerName: string, attackerId: string) {
   isPlayerDead = true;
   playDeathSound();
-  network.sendKill(network.localName, network.localId);
+
+  // Send kill announcement across all clients
+  network.sendKill(attackerName, attackerId, network.localName, network.localId);
   network.recordDeathInDB();
 
   deathReason.textContent = `Eliminated by ${attackerName}. Respawning in 3s...`;
   deathScreen.style.display = 'flex';
-  document.exitPointerLock();
+  blocker.style.display = 'none';
 
   setTimeout(() => {
+    // Respawn local player
     const spawn = getRandomSpawn();
     camera.position.set(spawn.x, 1.6, spawn.z);
     playerHealth = 100;
     isPlayerDead = false;
     updateHealthUI();
     deathScreen.style.display = 'none';
+
+    // Broadcast respawn event to all clients to unhide character at spawn location
+    network.sendRespawn(spawn.x, 0, spawn.z);
+    network.broadcastPosition(spawn.x, 0, spawn.z, controls.getYaw());
+
+    renderer.domElement.requestPointerLock();
   }, 3000);
 }
 
@@ -141,7 +154,13 @@ if (supabaseUrl && supabaseKey) {
 }
 
 // Controls & Weapon
-const controls = setupInput(camera, renderer.domElement, blocker, playBtn);
+const controls = setupInput(
+  camera,
+  renderer.domElement,
+  blocker,
+  playBtn,
+  () => !isPlayerDead
+);
 const weapon = new WeaponSystem(camera, scene, office, network);
 
 // Bake static shadow map once
@@ -180,8 +199,8 @@ function animate(currentTime: number) {
 
   network.update(delta);
 
-  // Broadcast position (20 ticks/sec)
-  if (currentTime - lastNetworkSync > 50 && !isPlayerDead) {
+  // Broadcast position (30 ticks/sec ~ 33ms)
+  if (currentTime - lastNetworkSync > 33 && !isPlayerDead) {
     network.broadcastPosition(
       camera.position.x,
       camera.position.y - 1.6,
@@ -191,8 +210,8 @@ function animate(currentTime: number) {
     lastNetworkSync = currentTime;
   }
 
-  // Poll database leaderboard periodically (every 10s)
-  if (currentTime - lastLeaderboardPoll > 10000) {
+  // Poll database leaderboard periodically (every 5s)
+  if (currentTime - lastLeaderboardPoll > 5000) {
     network.fetchLeaderboard();
     lastLeaderboardPoll = currentTime;
   }

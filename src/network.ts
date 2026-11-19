@@ -1,5 +1,5 @@
 import { createClient, RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
-import { Scene } from 'three';
+import { Scene, Vector3 } from 'three';
 import { RemotePlayer, PlayerAABB } from './player';
 import { playHitSound } from './audio';
 
@@ -26,7 +26,7 @@ export class NetworkManager {
   private scene: Scene;
   private remotePlayers = new Map<string, RemotePlayer>();
   private onPlayerCountChange?: (count: number) => void;
-  private onLocalDamaged?: (amount: number, attackerName: string) => void;
+  private onLocalDamaged?: (amount: number, attackerName: string, attackerId: string) => void;
   private onKillFeed?: (killer: string, victim: string) => void;
   private onLeaderboardUpdate?: (leaderboard: LeaderboardEntry[]) => void;
 
@@ -34,7 +34,7 @@ export class NetworkManager {
     scene: Scene,
     initialName = '',
     onPlayerCountChange?: (count: number) => void,
-    onLocalDamaged?: (amount: number, attackerName: string) => void,
+    onLocalDamaged?: (amount: number, attackerName: string, attackerId: string) => void,
     onKillFeed?: (killer: string, victim: string) => void,
     onLeaderboardUpdate?: (leaderboard: LeaderboardEntry[]) => void
   ) {
@@ -68,7 +68,7 @@ export class NetworkManager {
       this.client = createClient(supabaseUrl, supabaseAnonKey, {
         realtime: {
           params: {
-            eventsPerSecond: 20
+            eventsPerSecond: 30
           }
         }
       });
@@ -113,7 +113,7 @@ export class NetworkManager {
         this.onPlayerCountChange?.(this.remotePlayers.size + 1);
       });
 
-      // Position sync broadcast
+      // Position sync broadcast (30Hz tick)
       this.channel.on('broadcast', { event: 'pos' }, (payload) => {
         const data = payload.payload as { id: string; p: [number, number, number, number] };
         if (!data || data.id === this.localId) return;
@@ -132,7 +132,7 @@ export class NetworkManager {
         if (!data) return;
 
         if (data.targetId === this.localId) {
-          this.onLocalDamaged?.(data.dmg, data.attackerName);
+          this.onLocalDamaged?.(data.dmg, data.attackerName, data.attackerId);
         } else {
           const remoteTarget = this.remotePlayers.get(data.targetId);
           if (remoteTarget) {
@@ -142,18 +142,39 @@ export class NetworkManager {
         }
       });
 
-      // Kill announcements
+      // Kill announcements & death visibility sync
       this.channel.on('broadcast', { event: 'kill' }, (payload) => {
-        const data = payload.payload as { killer: string; victim: string; victimId: string };
+        const data = payload.payload as { killer: string; killerId: string; victim: string; victimId: string };
         if (data) {
           this.onKillFeed?.(data.killer, data.victim);
           const remoteTarget = this.remotePlayers.get(data.victimId);
           if (remoteTarget) {
+            // Mark remote player dead immediately on all clients
             remoteTarget.setDead(true);
-            setTimeout(() => remoteTarget.setDead(false), 3000);
+          }
+          setTimeout(() => this.fetchLeaderboard(), 400);
+        }
+      });
+
+      // Respawn announcement
+      this.channel.on('broadcast', { event: 'respawn' }, (payload) => {
+        const data = payload.payload as { id: string; p: [number, number, number] };
+        if (data) {
+          const remoteTarget = this.remotePlayers.get(data.id);
+          if (remoteTarget) {
+            remoteTarget.teleport(new Vector3(data.p[0], data.p[1], data.p[2]), 0);
+            remoteTarget.setDead(false);
           }
         }
       });
+
+      // Listen for database changes on players table
+      this.client
+        .channel('db-changes')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, () => {
+          this.fetchLeaderboard();
+        })
+        .subscribe();
 
       this.channel.subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
@@ -183,52 +204,64 @@ export class NetworkManager {
         last_seen: new Date().toISOString()
       }, { onConflict: 'id' });
     } catch {
-      // Ignored if table not created yet
+      // Graceful
     }
   }
 
-  public async recordKillInDB(victimName: string, victimId: string) {
+  public async recordKillInDB(killerId: string, killerName: string, victimId: string, victimName: string) {
     if (!this.client) return;
     try {
-      // 1. Insert match event
       await this.client.from('match_events').insert({
-        killer_id: this.localId,
-        killer_name: this.localName,
+        killer_id: killerId,
+        killer_name: killerName,
         victim_id: victimId,
         victim_name: victimName
       });
 
-      // 2. Increment score in players table
-      await this.client.rpc('increment_player_kill', { p_id: this.localId }).catch(() => {
-        // Fallback standard update
-        this.client?.from('players').select('kills, score').eq('id', this.localId).single().then(({ data }) => {
-          if (data) {
-            this.client?.from('players').update({
-              kills: (data.kills || 0) + 1,
-              score: (data.score || 0) + 100
-            }).eq('id', this.localId);
-          }
-        });
-      });
+      const { data } = await this.client
+        .from('players')
+        .select('kills, score')
+        .eq('id', killerId)
+        .maybeSingle();
+
+      const newKills = ((data?.kills) || 0) + 1;
+      const newScore = ((data?.score) || 0) + 100;
+
+      await this.client.from('players').upsert({
+        id: killerId,
+        name: killerName,
+        kills: newKills,
+        score: newScore,
+        last_seen: new Date().toISOString()
+      }, { onConflict: 'id' });
 
       this.fetchLeaderboard();
-    } catch {
-      // DB errors won't break the live match
+    } catch (err) {
+      console.warn('Error recording kill in DB:', err);
     }
   }
 
   public async recordDeathInDB() {
     if (!this.client) return;
     try {
-      this.client.from('players').select('deaths').eq('id', this.localId).single().then(({ data }) => {
-        if (data) {
-          this.client?.from('players').update({
-            deaths: (data.deaths || 0) + 1
-          }).eq('id', this.localId);
-        }
-      });
-    } catch {
-      // Graceful
+      const { data } = await this.client
+        .from('players')
+        .select('deaths')
+        .eq('id', this.localId)
+        .maybeSingle();
+
+      const newDeaths = ((data?.deaths) || 0) + 1;
+
+      await this.client.from('players').upsert({
+        id: this.localId,
+        name: this.localName,
+        deaths: newDeaths,
+        last_seen: new Date().toISOString()
+      }, { onConflict: 'id' });
+
+      this.fetchLeaderboard();
+    } catch (err) {
+      console.warn('Error recording death in DB:', err);
     }
   }
 
@@ -245,7 +278,7 @@ export class NetworkManager {
         this.onLeaderboardUpdate(data as LeaderboardEntry[]);
       }
     } catch {
-      // Silent fallback
+      // Graceful
     }
   }
 
@@ -282,20 +315,38 @@ export class NetworkManager {
     });
   }
 
-  public sendKill(victimName: string, victimId: string) {
+  public sendKill(killerName: string, killerId: string, victimName: string, victimId: string) {
     if (!this.channel || !this.isConnected) return;
 
     this.channel.send({
       type: 'broadcast',
       event: 'kill',
       payload: {
-        killer: this.localName,
+        killer: killerName,
+        killerId,
         victim: victimName,
         victimId
       }
     });
 
-    this.recordKillInDB(victimName, victimId);
+    this.recordKillInDB(killerId, killerName, victimId, victimName);
+  }
+
+  public sendRespawn(x: number, y: number, z: number) {
+    if (!this.channel || !this.isConnected) return;
+
+    this.channel.send({
+      type: 'broadcast',
+      event: 'respawn',
+      payload: {
+        id: this.localId,
+        p: [
+          Math.round(x * 100) / 100,
+          Math.round(y * 100) / 100,
+          Math.round(z * 100) / 100
+        ]
+      }
+    });
   }
 
   public raycastPlayers(

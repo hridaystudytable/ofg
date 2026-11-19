@@ -11,7 +11,8 @@ export function setupInput(
   camera: Camera,
   domElement: HTMLElement,
   blocker: HTMLElement,
-  playBtn: HTMLElement
+  playBtn: HTMLElement,
+  shouldBlockerShow: () => boolean
 ): InputController {
   let isLocked = false;
   let isAiming = false;
@@ -38,7 +39,10 @@ export function setupInput(
       blocker.style.display = 'none';
     } else {
       isLocked = false;
-      blocker.style.display = 'flex';
+      // ONLY show the ESC / Name modal if the player is NOT currently in the dead / respawning state
+      if (shouldBlockerShow()) {
+        blocker.style.display = 'flex';
+      }
     }
   });
 
@@ -129,7 +133,6 @@ export function setupInput(
       const rightX = Math.cos(camYaw);
       const rightZ = -Math.sin(camYaw);
 
-      // Walk slightly slower while scoped
       const speed = isAiming ? baseSpeed * 0.65 : baseSpeed;
 
       velocity.x = (forwardX * direction.z + rightX * direction.x) * speed * delta;

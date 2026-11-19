@@ -133,6 +133,14 @@ export class RemotePlayer {
     this.group.visible = !dead;
   }
 
+  teleport(pos: Vector3, yaw: number) {
+    this.group.position.copy(pos);
+    this.targetPos.copy(pos);
+    this.currentYaw = yaw;
+    this.targetYaw = yaw;
+    this.group.rotation.y = yaw;
+  }
+
   updateInterpolation(delta: number) {
     if (this.flashTimer > 0) {
       this.flashTimer -= delta;
@@ -141,13 +149,21 @@ export class RemotePlayer {
       }
     }
 
-    const t = Math.min(1.0, delta * 14);
-    this.group.position.lerp(this.targetPos, t);
+    if (this.isDead) return;
+
+    // Fast-snap if distance is too large (e.g. initial spawn or respawn teleport)
+    if (this.group.position.distanceToSquared(this.targetPos) > 16) {
+      this.group.position.copy(this.targetPos);
+    } else {
+      // 20x delta lerp for instantaneous, smooth tracking
+      const t = Math.min(1.0, delta * 20);
+      this.group.position.lerp(this.targetPos, t);
+    }
 
     let diff = this.targetYaw - this.currentYaw;
     while (diff < -Math.PI) diff += Math.PI * 2;
     while (diff > Math.PI) diff -= Math.PI * 2;
-    this.currentYaw += diff * t;
+    this.currentYaw += diff * Math.min(1.0, delta * 20);
     this.group.rotation.y = this.currentYaw;
   }
 
