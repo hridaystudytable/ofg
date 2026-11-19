@@ -3,6 +3,7 @@ import { Camera, Vector3, Euler } from 'three';
 export interface InputController {
   update(delta: number, collisionCheck?: (newPos: Vector3) => boolean): void;
   isLocked: boolean;
+  isCrouching: boolean;
   getYaw(): number;
   setAiming(aiming: boolean): void;
 }
@@ -12,18 +13,39 @@ export function setupInput(
   domElement: HTMLElement,
   blocker: HTMLElement,
   playBtn: HTMLElement,
-  shouldBlockerShow: () => boolean
+  shouldBlockerShow: () => boolean,
+  onThrowGrenade?: () => void
 ): InputController {
   let isLocked = false;
   let isAiming = false;
-  const moveState = { forward: false, backward: false, left: false, right: false };
+  let isCrouching = false;
+
+  const moveState = {
+    forward: false,
+    backward: false,
+    left: false,
+    right: false,
+    jump: false,
+    crouch: false
+  };
 
   const euler = new Euler(0, 0, 0, 'YXZ');
   const velocity = new Vector3();
   const direction = new Vector3();
   const proposedPos = new Vector3();
 
-  // Pointer lock events via play button & canvas click
+  // Jump & vertical physics
+  let verticalVelocity = 0;
+  const gravity = -22;
+  const jumpImpulse = 7.5;
+  const standingEyeHeight = 1.6;
+  const crouchingEyeHeight = 0.95;
+  let currentTargetEyeHeight = standingEyeHeight;
+  let isGrounded = true;
+
+  // Head bobbing cycle
+  let bobTimer = 0;
+
   playBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     domElement.requestPointerLock();
@@ -39,14 +61,13 @@ export function setupInput(
       blocker.style.display = 'none';
     } else {
       isLocked = false;
-      // ONLY show the ESC / Name modal if the player is NOT currently in the dead / respawning state
       if (shouldBlockerShow()) {
         blocker.style.display = 'flex';
       }
     }
   });
 
-  // Mouse look (reduces sensitivity when scoped for precision)
+  // Responsive mouse look
   document.addEventListener('mousemove', (event) => {
     if (!isLocked) return;
 
@@ -67,6 +88,19 @@ export function setupInput(
 
   // Keyboard navigation
   window.addEventListener('keydown', (e) => {
+    // Jump with Space
+    if (e.code === 'Space' || e.key === ' ' || e.keyCode === 32) {
+      if (isGrounded) {
+        // If crouching, uncrouch first and leap
+        isCrouching = false;
+        currentTargetEyeHeight = standingEyeHeight;
+        verticalVelocity = jumpImpulse;
+        isGrounded = false;
+      }
+      e.preventDefault();
+      return;
+    }
+
     switch (e.code) {
       case 'KeyW':
       case 'ArrowUp':
@@ -83,6 +117,19 @@ export function setupInput(
       case 'KeyD':
       case 'ArrowRight':
         moveState.right = true;
+        break;
+      case 'KeyC':
+      case 'ControlLeft':
+      case 'ControlRight':
+        // Crouch / Seat
+        isCrouching = true;
+        currentTargetEyeHeight = crouchingEyeHeight;
+        break;
+      case 'KeyG':
+        // Throw Grenade
+        if (isLocked) {
+          onThrowGrenade?.();
+        }
         break;
     }
   });
@@ -105,14 +152,23 @@ export function setupInput(
       case 'ArrowRight':
         moveState.right = false;
         break;
+      case 'KeyC':
+      case 'ControlLeft':
+      case 'ControlRight':
+        isCrouching = false;
+        currentTargetEyeHeight = standingEyeHeight;
+        break;
     }
   });
 
-  const baseSpeed = 4.2;
+  const baseSpeed = 5.2;
 
   return {
     get isLocked() {
       return isLocked;
+    },
+    get isCrouching() {
+      return isCrouching;
     },
     getYaw() {
       return euler.y;
@@ -125,7 +181,12 @@ export function setupInput(
 
       direction.z = Number(moveState.forward) - Number(moveState.backward);
       direction.x = Number(moveState.right) - Number(moveState.left);
-      direction.normalize();
+
+      const isMoving = direction.z !== 0 || direction.x !== 0;
+
+      if (isMoving) {
+        direction.normalize();
+      }
 
       const camYaw = euler.y;
       const forwardX = -Math.sin(camYaw);
@@ -133,15 +194,57 @@ export function setupInput(
       const rightX = Math.cos(camYaw);
       const rightZ = -Math.sin(camYaw);
 
-      const speed = isAiming ? baseSpeed * 0.65 : baseSpeed;
+      // Speed modifiers: Crouch = 45%, ADS = 60%, Sprint = 100%
+      let speed = baseSpeed;
+      if (isCrouching) {
+        speed *= 0.45;
+      } else if (isAiming) {
+        speed *= 0.6;
+      }
 
       velocity.x = (forwardX * direction.z + rightX * direction.x) * speed * delta;
       velocity.z = (forwardZ * direction.z + rightZ * direction.x) * speed * delta;
 
       proposedPos.copy(camera.position).add(velocity);
 
+      // Smooth step test with Wall Sliding
       if (!collisionCheck || collisionCheck(proposedPos)) {
-        camera.position.add(velocity);
+        camera.position.x += velocity.x;
+        camera.position.z += velocity.z;
+      } else {
+        const testX = camera.position.clone();
+        testX.x += velocity.x;
+        if (!collisionCheck || collisionCheck(testX)) {
+          camera.position.x += velocity.x;
+        }
+
+        const testZ = camera.position.clone();
+        testZ.z += velocity.z;
+        if (!collisionCheck || collisionCheck(testZ)) {
+          camera.position.z += velocity.z;
+        }
+      }
+
+      // Vertical gravity & Jump Physics
+      if (!isGrounded) {
+        verticalVelocity += gravity * delta;
+        camera.position.y += verticalVelocity * delta;
+
+        // Ground check
+        if (camera.position.y <= currentTargetEyeHeight) {
+          camera.position.y = currentTargetEyeHeight;
+          verticalVelocity = 0;
+          isGrounded = true;
+        }
+      } else {
+        // Smooth transition between crouching and standing eye height
+        camera.position.y += (currentTargetEyeHeight - camera.position.y) * Math.min(1.0, delta * 14);
+
+        // Procedural Head Bobbing (only when walking on the ground)
+        if (isMoving && !isAiming) {
+          bobTimer += delta * (isCrouching ? 8 : 12);
+          camera.position.y += Math.sin(bobTimer) * 0.03;
+        }
       }
     }
   };

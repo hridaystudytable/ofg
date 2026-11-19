@@ -56,6 +56,27 @@
         transition: opacity 0.08s ease-out;
         z-index: 6;
       }
+      /* Directional Hit Indicator Arc */
+      #hit-indicator {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        width: 140px;
+        height: 140px;
+        margin-top: -70px;
+        margin-left: -70px;
+        pointer-events: none;
+        z-index: 9;
+        opacity: 0;
+        transition: opacity 0.15s ease-out;
+      }
+      .hit-indicator-arc {
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        border-top: 5px solid #ef4444;
+        filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.8));
+      }
       /* Tactical Reticle */
       #crosshair {
         position: fixed;
@@ -518,6 +539,7 @@
     <div id="canvas-container"></div>
     <div class="vignette"></div>
     <div id="damage-flash"></div>
+    <div id="hit-indicator"><div class="hit-indicator-arc"></div></div>
 
     <!-- Toast Notice -->
     <div id="toast-notice">Invite link copied to clipboard!</div>
@@ -577,6 +599,10 @@
           <div style="font-size: 18px; font-weight: 700; color: var(--accent-blue);">SMG-9 TACTICAL</div>
           <div style="font-size: 11px; color: var(--text-muted);">&infin; AMMO &bull; 25 DMG</div>
         </div>
+        <div class="hud-block">
+          <div class="hud-label">GRENADES (G)</div>
+          <div id="grenade-val" class="hud-val" style="color: #f59e0b;">3</div>
+        </div>
       </div>
 
       <div class="hud-card" style="font-size: 11px; color: var(--text-muted);">
@@ -620,10 +646,12 @@
 
         <div class="controls-grid">
           <div class="control-item"><span class="keycap">W A S D</span> Movement</div>
-          <div class="control-item"><span class="keycap">MOUSE</span> Camera Look</div>
+          <div class="control-item"><span class="keycap">SPACE</span> Jump</div>
+          <div class="control-item"><span class="keycap">C / CTRL</span> Seat / Crouch</div>
+          <div class="control-item"><span class="keycap">G</span> Frag Grenade (x3)</div>
           <div class="control-item"><span class="keycap">LEFT CLICK</span> Fire (25 DMG)</div>
           <div class="control-item"><span class="keycap">RIGHT CLICK</span> Aim Scope (ADS)</div>
-          <div class="control-item"><span class="keycap">ESC</span> Free Cursor (Top Bar)</div>
+          <div class="control-item"><span class="keycap">ESC</span> Free Cursor</div>
         </div>
 
         <div style="display: flex; gap: 10px; margin-bottom: 12px;">

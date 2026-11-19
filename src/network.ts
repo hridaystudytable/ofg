@@ -28,7 +28,7 @@ export class NetworkManager {
   private matchScores = new Map<string, MatchScoreEntry>();
 
   private onPlayerCountChange?: (count: number) => void;
-  private onLocalDamaged?: (amount: number, attackerName: string, attackerId: string) => void;
+  private onLocalDamaged?: (amount: number, attackerName: string, attackerId: string, attackerPos?: { x: number; z: number }) => void;
   private onKillFeed?: (killer: string, victim: string) => void;
   private onLeaderboardUpdate?: (leaderboard: MatchScoreEntry[]) => void;
   private onMatchEnded?: (enderName: string, reason?: string) => void;
@@ -38,7 +38,7 @@ export class NetworkManager {
     scene: Scene,
     initialName = '',
     onPlayerCountChange?: (count: number) => void,
-    onLocalDamaged?: (amount: number, attackerName: string, attackerId: string) => void,
+    onLocalDamaged?: (amount: number, attackerName: string, attackerId: string, attackerPos?: { x: number; z: number }) => void,
     onKillFeed?: (killer: string, victim: string) => void,
     onLeaderboardUpdate?: (leaderboard: MatchScoreEntry[]) => void,
     onMatchEnded?: (enderName: string, reason?: string) => void,
@@ -102,7 +102,6 @@ export class NetworkManager {
         }
       });
 
-      // Presence state tracking (joins/leaves)
       this.channel.on('presence', { event: 'sync' }, () => {
         const state = this.channel?.presenceState() || {};
         const activeIds = new Set<string>();
@@ -160,13 +159,23 @@ export class NetworkManager {
         }
       });
 
-      // Bullet hit damage broadcast
+      // Bullet hit damage broadcast (includes attacker coordinate for directional hit indicator)
       this.channel.on('broadcast', { event: 'hit' }, (payload) => {
-        const data = payload.payload as { targetId: string; attackerId: string; attackerName: string; dmg: number };
+        const data = payload.payload as {
+          targetId: string;
+          attackerId: string;
+          attackerName: string;
+          dmg: number;
+          ax?: number;
+          az?: number;
+        };
         if (!data) return;
 
         if (data.targetId === this.localId) {
-          this.onLocalDamaged?.(data.dmg, data.attackerName, data.attackerId);
+          const attackerPos = (data.ax !== undefined && data.az !== undefined)
+            ? { x: data.ax, z: data.az }
+            : undefined;
+          this.onLocalDamaged?.(data.dmg, data.attackerName, data.attackerId, attackerPos);
         } else {
           const remoteTarget = this.remotePlayers.get(data.targetId);
           if (remoteTarget) {
@@ -176,7 +185,7 @@ export class NetworkManager {
         }
       });
 
-      // Kill announcements & per-match score updates
+      // Kill announcements
       this.channel.on('broadcast', { event: 'kill' }, (payload) => {
         const data = payload.payload as { killer: string; killerId: string; victim: string; victimId: string };
         if (data) {
@@ -238,7 +247,7 @@ export class NetworkManager {
         }
       });
 
-      // Reset Match scores & timer broadcast
+      // Reset Match scores
       this.channel.on('broadcast', { event: 'reset_match' }, (payload) => {
         const data = payload.payload as { startTime?: number };
         this.resetMatchScoresLocally();
@@ -327,7 +336,7 @@ export class NetworkManager {
     });
   }
 
-  public sendDamage(targetId: string, dmg = 25) {
+  public sendDamage(targetId: string, dmg = 25, attackerPos?: { x: number; z: number }) {
     if (!this.channel || !this.isConnected) return;
 
     this.channel.send({
@@ -337,7 +346,9 @@ export class NetworkManager {
         targetId,
         attackerId: this.localId,
         attackerName: this.localName,
-        dmg
+        dmg,
+        ax: attackerPos ? Math.round(attackerPos.x * 10) / 10 : undefined,
+        az: attackerPos ? Math.round(attackerPos.z * 10) / 10 : undefined
       }
     });
   }

@@ -1,7 +1,9 @@
+import { Vector3 } from 'three';
 import { createRenderContext } from './renderer';
 import { setupInput } from './input';
 import { buildOffice } from './office';
 import { WeaponSystem } from './weapon';
+import { GrenadeSystem } from './grenade';
 import { NetworkManager, MatchScoreEntry } from './network';
 import { playDeathSound } from './audio';
 
@@ -18,7 +20,9 @@ const playerCountPill = document.getElementById('player-count-pill') as HTMLElem
 const playerNameInput = document.getElementById('player-name-input') as HTMLInputElement;
 const leaderboardRows = document.getElementById('leaderboard-rows') as HTMLElement;
 const healthVal = document.getElementById('health-val') as HTMLElement;
+const grenadeVal = document.getElementById('grenade-val') as HTMLElement;
 const damageFlash = document.getElementById('damage-flash') as HTMLElement;
+const hitIndicator = document.getElementById('hit-indicator') as HTMLElement;
 const killFeed = document.getElementById('kill-feed') as HTMLElement;
 const deathScreen = document.getElementById('death-screen') as HTMLElement;
 const deathReason = document.getElementById('death-reason') as HTMLElement;
@@ -62,7 +66,7 @@ let isPlayerDead = false;
 let isMatchOver = false;
 let currentMatchScores: MatchScoreEntry[] = [];
 
-// 5-Minute Match Timer (300 seconds)
+// 5-Minute Match Timer
 const MATCH_DURATION = 300;
 let matchRemainingSeconds = MATCH_DURATION;
 
@@ -81,11 +85,33 @@ function updateTimerDisplay() {
   }
 }
 
-function showDamageFlash() {
+function showDamageFlash(attackerPos?: { x: number; z: number }) {
   damageFlash.style.opacity = '1';
   setTimeout(() => {
     damageFlash.style.opacity = '0';
   }, 100);
+
+  // Directional hit indicator: points toward the shooter relative to player's current view
+  if (attackerPos) {
+    const dx = attackerPos.x - camera.position.x;
+    const dz = attackerPos.z - camera.position.z;
+
+    // Angle of incoming bullet in world space
+    const incomingAngle = Math.atan2(dx, dz);
+    // Player's camera view yaw
+    const playerYaw = controls.getYaw();
+
+    // Relative angle offset
+    let relAngle = incomingAngle - playerYaw + Math.PI;
+    const deg = (relAngle * 180) / Math.PI;
+
+    hitIndicator.style.transform = `rotate(${deg}deg)`;
+    hitIndicator.style.opacity = '1';
+
+    setTimeout(() => {
+      hitIndicator.style.opacity = '0';
+    }, 450);
+  }
 }
 
 function updateHealthUI() {
@@ -130,7 +156,6 @@ function showToast(msg: string) {
   }, 2500);
 }
 
-// Conclusion screen: Top 1 = VICTORY, Rest = DEFEAT
 function displayMatchOver(enderName: string, reason?: string) {
   isMatchOver = true;
   document.exitPointerLock();
@@ -181,10 +206,10 @@ const network = new NetworkManager(
   (count) => {
     playerCountPill.textContent = `${count} ${count === 1 ? 'Player' : 'Players'}`;
   },
-  (dmg, attackerName, attackerId) => {
+  (dmg, attackerName, attackerId, attackerPos) => {
     if (isPlayerDead || isMatchOver) return;
     playerHealth -= dmg;
-    showDamageFlash();
+    showDamageFlash(attackerPos);
     updateHealthUI();
 
     if (playerHealth <= 0) {
@@ -242,17 +267,28 @@ if (supabaseUrl && supabaseKey) {
   networkStatusText.textContent = 'Solo Sandbox';
 }
 
+// Grenade System
+const grenades = new GrenadeSystem(scene, office, network);
+
 // Controls & Weapon
 const controls = setupInput(
   camera,
   renderer.domElement,
   blocker,
   playBtn,
-  () => !isPlayerDead && !isMatchOver
+  () => !isPlayerDead && !isMatchOver,
+  () => {
+    // Throw grenade callback (G key)
+    if (!isPlayerDead && !isMatchOver) {
+      const origin = camera.position.clone();
+      const forward = new Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+      if (grenades.throwGrenade(origin, forward)) {
+        grenadeVal.textContent = grenades.grenadeCount.toString();
+      }
+    }
+  }
 );
 const weapon = new WeaponSystem(camera, scene, office, network);
-
-renderer.shadowMap.needsUpdate = true;
 
 // End Game button handler
 const handleEndGame = (e: Event) => {
@@ -288,10 +324,11 @@ btnPlayAgain.addEventListener('click', (e) => {
   isMatchOver = false;
   matchOverScreen.style.display = 'none';
 
-  // Reset 5-minute timer and scores for new round
   matchRemainingSeconds = MATCH_DURATION;
   updateTimerDisplay();
   network.resetMatchScores();
+  grenades.resetGrenades();
+  grenadeVal.textContent = '3';
 
   const spawn = getRandomSpawn();
   camera.position.set(spawn.x, 1.6, spawn.z);
@@ -326,13 +363,11 @@ function animate(currentTime: number) {
   const delta = Math.min((currentTime - lastTime) / 1000, 0.1);
   lastTime = currentTime;
 
-  // 1-second interval timer countdown
   if (!isMatchOver && currentTime - lastTimerTick >= 1000) {
     matchRemainingSeconds -= 1;
     updateTimerDisplay();
     lastTimerTick = currentTime;
 
-    // When 5 minutes expire: conclude match automatically
     if (matchRemainingSeconds <= 0) {
       matchRemainingSeconds = 0;
       updateTimerDisplay();
@@ -347,14 +382,27 @@ function animate(currentTime: number) {
       return office.isWalkable(nextPos.x, nextPos.z, 0.35);
     });
     weapon.update(delta);
+    // Update grenades with local player position so self-damage applies if in blast radius
+    grenades.update(delta, camera.position, (dmg, attackerName, attackerId, attackerPos) => {
+      if (isPlayerDead || isMatchOver) return;
+      playerHealth -= dmg;
+      showDamageFlash(attackerPos);
+      updateHealthUI();
+
+      if (playerHealth <= 0) {
+        handlePlayerDeath(attackerName, attackerId);
+      }
+    });
   }
 
   network.update(delta);
 
+  // Broadcast position (including Y level so jumping and crouching are seen by others)
   if (currentTime - lastNetworkSync > 33 && !isPlayerDead && !isMatchOver) {
+    const feetY = controls.isCrouching ? -0.4 : (camera.position.y - 1.6);
     network.broadcastPosition(
       camera.position.x,
-      camera.position.y - 1.6,
+      feetY,
       camera.position.z,
       controls.getYaw()
     );

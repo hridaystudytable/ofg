@@ -168,7 +168,8 @@ export class WeaponSystem {
       targetPos.set(playerHit.pointX, playerHit.pointY, playerHit.pointZ);
       playPlayerHurtSound();
       playerHit.hitPlayer.takeDamageVisual();
-      this.network.sendDamage(playerHit.hitPlayer.id, 25);
+      // Send damage with attacker origin position for directional hit marker
+      this.network.sendDamage(playerHit.hitPlayer.id, 25, { x: origin.x, z: origin.z });
     } else if (envHit) {
       targetPos.set(envHit.pointX, envHit.pointY, envHit.pointZ);
       playHitSound();
