@@ -324,7 +324,7 @@ const controls = setupInput(
 const weapon = new WeaponSystem(camera, scene, office, network, (gun, index) => {
   if (weaponName) weaponName.textContent = gun.name;
   if (weaponDesc) {
-    const rateText = index === 0 ? 'RAPID' : (index === 1 ? 'BALANCED' : 'HEAVY BOLT');
+    const rateText = index === 0 ? 'RAPID' : (index === 1 ? '3-ROUND BURST' : 'HEAVY BOLT');
     weaponDesc.innerHTML = `&infin; AMMO &bull; ${gun.dmg} DMG &bull; ${rateText}`;
   }
 });

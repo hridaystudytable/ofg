@@ -25,6 +25,8 @@ export interface GunConfig {
   tracerColor: number;
   soundType: 'smg' | 'ar' | 'sniper';
   description: string;
+  burstCount?: number;
+  burstDelay?: number;
 }
 
 export const GUN_LOADOUTS: GunConfig[] = [
@@ -37,18 +39,20 @@ export const GUN_LOADOUTS: GunConfig[] = [
     recoil: 0.06,
     tracerColor: 0xffe28a,
     soundType: 'smg',
-    description: 'High rate of fire, low recoil, rapid burst'
+    description: 'High rate of fire, low recoil, full auto'
   },
   {
-    name: 'M4A1 CARBINE',
+    name: 'M4A1 BURST',
     type: 'ar',
-    dmg: 38,
-    fireInterval: 0.18, // ~5.5 shots/sec
+    dmg: 34,
+    fireInterval: 0.38, // Delay after 3-round burst finishes
+    burstCount: 3,
+    burstDelay: 0.08, // 80ms between rounds in the burst
     scopedFov: 36,
-    recoil: 0.10,
+    recoil: 0.09,
     tracerColor: 0x38bdf8,
     soundType: 'ar',
-    description: 'High damage, mid-range precision assault rifle'
+    description: '3-Round Burst, high accuracy and lethal precision'
   },
   {
     name: 'AWM SNIPER',
@@ -83,6 +87,8 @@ export class WeaponSystem {
   recoilZ = 0;
   recoilRotX = 0;
   fireCooldown = 0;
+  private burstRemaining = 0;
+  private burstCooldown = 0;
 
   tracers: { line: LineSegments; life: number }[] = [];
   onWeaponChange?: (gun: GunConfig, index: number) => void;
@@ -297,6 +303,8 @@ export class WeaponSystem {
     });
 
     this.isAiming = false;
+    this.burstRemaining = 0;
+    this.burstCooldown = 0;
     this.fireCooldown = 0.25; // brief switch cooldown
     playSwitchSound();
 
@@ -308,9 +316,20 @@ export class WeaponSystem {
   }
 
   shoot() {
-    if (this.fireCooldown > 0) return;
+    if (this.fireCooldown > 0 || this.burstRemaining > 0) return;
     const gun = this.currentGun;
-    this.fireCooldown = gun.fireInterval;
+
+    if (gun.burstCount && gun.burstCount > 1) {
+      this.burstRemaining = gun.burstCount;
+      this.burstCooldown = 0; // Trigger first round immediately
+    } else {
+      this.fireSingleRound();
+      this.fireCooldown = gun.fireInterval;
+    }
+  }
+
+  private fireSingleRound() {
+    const gun = this.currentGun;
 
     // Recoil (slightly dampened when scoped)
     const recoilFactor = this.isAiming ? 0.6 : 1.0;
@@ -382,11 +401,29 @@ export class WeaponSystem {
 
   update(delta: number) {
     const gun = this.currentGun;
+
+    // Handle Burst fire rounds sequencing
+    if (this.burstRemaining > 0) {
+      this.burstCooldown -= delta;
+      if (this.burstCooldown <= 0) {
+        this.fireSingleRound();
+        this.burstRemaining -= 1;
+        if (this.burstRemaining > 0) {
+          this.burstCooldown = gun.burstDelay || 0.08;
+        } else {
+          // Burst cycle finished: apply interval cooldown before next burst can fire
+          this.fireCooldown = gun.fireInterval;
+        }
+      }
+    }
+
     if (this.fireCooldown > 0) {
       this.fireCooldown -= delta;
-      if (this.fireCooldown < gun.fireInterval * 0.6) {
+      if (this.fireCooldown < gun.fireInterval * 0.6 && this.burstRemaining === 0) {
         this.muzzleFlash.visible = false;
       }
+    } else if (this.burstRemaining === 0) {
+      this.muzzleFlash.visible = false;
     }
 
     // Smooth FOV zoom transition for scope
