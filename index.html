@@ -341,6 +341,34 @@
       .health-val { color: var(--accent-emerald); }
       .health-low { color: var(--accent-red) !important; }
 
+      /* Health Bar */
+      .health-bar-container {
+        width: 140px;
+        height: 10px;
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 6px;
+        overflow: hidden;
+        margin-top: 4px;
+      }
+      .health-bar-fill {
+        height: 100%;
+        width: 100%;
+        background: linear-gradient(90deg, #10b981 0%, #34d399 100%);
+        border-radius: 5px;
+        transition: width 0.2s ease-out, background 0.25s ease-out;
+        box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+      }
+      .health-bar-fill.bar-warning {
+        background: linear-gradient(90deg, #f59e0b 0%, #fbbf24 100%);
+        box-shadow: 0 0 10px rgba(245, 158, 11, 0.5);
+      }
+      .health-bar-fill.bar-danger {
+        background: linear-gradient(90deg, #ef4444 0%, #f87171 100%);
+        box-shadow: 0 0 10px rgba(239, 68, 68, 0.6);
+        animation: pulseWarning 0.8s infinite;
+      }
+
       /* Death Screen */
       #death-screen {
         position: fixed;
@@ -557,6 +585,7 @@
     <div id="hud-bar">
       <div class="hud-card">
         <span style="font-weight: 700; color: #fff;">OFFICE STRIKE</span>
+        <span id="player-self-tag" style="color: var(--accent-blue); font-weight: 700; font-size: 13px; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.3); padding: 2px 8px; border-radius: 4px;">Agent</span>
         <span id="network-badge" class="badge-status badge-online">
           <span class="status-pulse"></span>
           <span id="network-status-text">Online Arena</span>
@@ -590,14 +619,21 @@
     <!-- Bottom Status & Weapons HUD -->
     <div id="bottom-hud">
       <div class="status-group">
-        <div class="hud-block">
-          <div class="hud-label">HEALTH</div>
-          <div id="health-val" class="hud-val health-val">100</div>
+        <div class="hud-block" style="min-width: 150px;">
+          <div style="display: flex; justify-content: space-between; align-items: baseline;">
+            <div class="hud-label">HEALTH</div>
+            <div id="health-val" style="font-size: 13px; font-weight: 700; color: var(--accent-emerald);">100</div>
+          </div>
+          <div class="health-bar-container">
+            <div id="health-bar-fill" class="health-bar-fill"></div>
+          </div>
         </div>
-        <div class="hud-block">
-          <div class="hud-label">WEAPON</div>
-          <div style="font-size: 18px; font-weight: 700; color: var(--accent-blue);">SMG-9 TACTICAL</div>
-          <div style="font-size: 11px; color: var(--text-muted);">&infin; AMMO &bull; 25 DMG</div>
+        <div class="hud-block" style="min-width: 170px;">
+          <div style="display: flex; justify-content: space-between; align-items: baseline;">
+            <div class="hud-label">WEAPON [1, 2, 3 / Q / SCROLL]</div>
+          </div>
+          <div id="weapon-name" style="font-size: 16px; font-weight: 800; color: var(--accent-blue); letter-spacing: 0.5px;">SMG-9 TACTICAL</div>
+          <div id="weapon-desc" style="font-size: 11px; color: var(--text-muted);">&infin; AMMO &bull; 25 DMG &bull; RAPID</div>
         </div>
         <div class="hud-block">
           <div class="hud-label">GRENADES (G)</div>
@@ -648,10 +684,11 @@
           <div class="control-item"><span class="keycap">W A S D</span> Movement</div>
           <div class="control-item"><span class="keycap">SPACE</span> Jump</div>
           <div class="control-item"><span class="keycap">C / CTRL</span> Seat / Crouch</div>
+          <div class="control-item"><span class="keycap">1 2 3 / Q</span> Switch Gun</div>
           <div class="control-item"><span class="keycap">G</span> Frag Grenade (x3)</div>
-          <div class="control-item"><span class="keycap">LEFT CLICK</span> Fire (25 DMG)</div>
+          <div class="control-item"><span class="keycap">LEFT CLICK</span> Fire</div>
           <div class="control-item"><span class="keycap">RIGHT CLICK</span> Aim Scope (ADS)</div>
-          <div class="control-item"><span class="keycap">ESC</span> Free Cursor</div>
+          <div class="control-item"><span class="keycap">SCROLL</span> Cycle Weapon</div>
         </div>
 
         <div style="display: flex; gap: 10px; margin-bottom: 12px;">

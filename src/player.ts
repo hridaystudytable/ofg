@@ -5,7 +5,10 @@ import {
   MeshLambertMaterial,
   MeshBasicMaterial,
   Scene,
-  Vector3
+  Vector3,
+  Sprite,
+  SpriteMaterial,
+  CanvasTexture
 } from 'three';
 
 export interface PlayerAABB {
@@ -17,10 +20,61 @@ export interface PlayerAABB {
   maxZ: number;
 }
 
+function createNameSprite(name: string): Sprite {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d')!;
+
+  // Background pill
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+  const r = 16;
+  const w = 256;
+  const h = 50;
+  const y0 = 7;
+  ctx.beginPath();
+  ctx.moveTo(r, y0);
+  ctx.lineTo(w - r, y0);
+  ctx.quadraticCurveTo(w, y0, w, y0 + r);
+  ctx.lineTo(w, y0 + h - r);
+  ctx.quadraticCurveTo(w, y0 + h, w - r, y0 + h);
+  ctx.lineTo(r, y0 + h);
+  ctx.quadraticCurveTo(0, y0 + h, 0, y0 + h - r);
+  ctx.lineTo(0, y0 + r);
+  ctx.quadraticCurveTo(0, y0, r, y0);
+  ctx.closePath();
+  ctx.fill();
+
+  // Border outline
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.8)';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // Name text
+  ctx.font = 'bold 26px "Courier New", monospace, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillText(name.slice(0, 16), 128, y0 + h / 2);
+
+  const texture = new CanvasTexture(canvas);
+  const material = new SpriteMaterial({
+    map: texture,
+    depthTest: false,
+    transparent: true
+  });
+
+  const sprite = new Sprite(material);
+  sprite.scale.set(1.2, 0.3, 1);
+  return sprite;
+}
+
 export class RemotePlayer {
   id: string;
   name: string;
   group: Group;
+  private visualWrapper: Group; // Container for agent model
+  private nameSprite: Sprite;
   targetPos: Vector3;
   targetYaw: number;
   currentYaw = 0;
@@ -45,6 +99,15 @@ export class RemotePlayer {
     this.targetPos = new Vector3(0, 0, 0);
     this.targetYaw = 0;
 
+    // The visual model is built looking toward -Z (natural Three.js forward)
+    this.visualWrapper = new Group();
+    this.group.add(this.visualWrapper);
+
+    // Floating nametag above head
+    this.nameSprite = createNameSprite(name);
+    this.nameSprite.position.set(0, 1.85, 0);
+    this.group.add(this.nameSprite);
+
     // Materials
     this.bodyMat = new MeshLambertMaterial({ color: colorHex });
     const vestMat = new MeshLambertMaterial({ color: 0x1e242b });
@@ -58,37 +121,38 @@ export class RemotePlayer {
     const torsoGeo = new BoxGeometry(0.48, 0.62, 0.28);
     this.bodyMesh = new Mesh(torsoGeo, this.bodyMat);
     this.bodyMesh.position.y = 0.94;
-    this.group.add(this.bodyMesh);
+    this.visualWrapper.add(this.bodyMesh);
 
     const vestGeo = new BoxGeometry(0.5, 0.44, 0.31);
     const vest = new Mesh(vestGeo, vestMat);
     vest.position.set(0, 0.96, 0);
-    this.group.add(vest);
+    this.visualWrapper.add(vest);
 
     const padGeo = new BoxGeometry(0.14, 0.08, 0.18);
     const leftPad = new Mesh(padGeo, vestMat);
     leftPad.position.set(-0.28, 1.2, 0);
-    this.group.add(leftPad);
+    this.visualWrapper.add(leftPad);
 
     const rightPad = new Mesh(padGeo, vestMat);
     rightPad.position.set(0.28, 1.2, 0);
-    this.group.add(rightPad);
+    this.visualWrapper.add(rightPad);
 
-    // 2. Head & Visor
+    // 2. Head & Visor (Looking towards -Z)
     const headGeo = new BoxGeometry(0.28, 0.28, 0.28);
     const head = new Mesh(headGeo, skinMat);
     head.position.y = 1.42;
-    this.group.add(head);
+    this.visualWrapper.add(head);
 
     const helmetGeo = new BoxGeometry(0.31, 0.14, 0.31);
     const helmet = new Mesh(helmetGeo, vestMat);
     helmet.position.y = 1.54;
-    this.group.add(helmet);
+    this.visualWrapper.add(helmet);
 
+    // Visor at -Z (front of the face)
     const visorGeo = new BoxGeometry(0.25, 0.07, 0.06);
     const visor = new Mesh(visorGeo, visorMat);
-    visor.position.set(0, 1.43, 0.14);
-    this.group.add(visor);
+    visor.position.set(0, 1.43, -0.14);
+    this.visualWrapper.add(visor);
 
     // 3. Legs & Combat Boots
     const legGeo = new BoxGeometry(0.16, 0.58, 0.18);
@@ -96,47 +160,48 @@ export class RemotePlayer {
 
     this.leftLeg = new Mesh(legGeo, pantsMat);
     this.leftLeg.position.set(-0.13, 0.62, 0);
-    this.group.add(this.leftLeg);
+    this.visualWrapper.add(this.leftLeg);
 
     this.rightLeg = new Mesh(legGeo, pantsMat);
     this.rightLeg.position.set(0.13, 0.62, 0);
-    this.group.add(this.rightLeg);
+    this.visualWrapper.add(this.rightLeg);
 
+    // Boots facing -Z (front of feet)
     const bootGeo = new BoxGeometry(0.18, 0.14, 0.24);
     const leftBoot = new Mesh(bootGeo, bootMat);
-    leftBoot.position.set(0, -0.52, 0.02);
+    leftBoot.position.set(0, -0.52, -0.02);
     this.leftLeg.add(leftBoot);
 
     const rightBoot = new Mesh(bootGeo, bootMat);
-    rightBoot.position.set(0, -0.52, 0.02);
+    rightBoot.position.set(0, -0.52, -0.02);
     this.rightLeg.add(rightBoot);
 
-    // 4. Arms & Two-handed Weapon stance
+    // 4. Arms & Two-handed Weapon stance pointing towards -Z
     const armGeo = new BoxGeometry(0.12, 0.5, 0.13);
     armGeo.translate(0, -0.22, 0);
 
     this.leftArm = new Mesh(armGeo, this.bodyMat);
     this.leftArm.position.set(-0.31, 1.18, 0);
-    this.leftArm.rotation.x = -Math.PI / 4;
-    this.leftArm.rotation.z = 0.2;
-    this.group.add(this.leftArm);
+    this.leftArm.rotation.x = Math.PI / 4;
+    this.leftArm.rotation.z = -0.2;
+    this.visualWrapper.add(this.leftArm);
 
     const rightArm = new Mesh(armGeo, this.bodyMat);
     rightArm.position.set(0.31, 1.18, 0);
-    rightArm.rotation.x = -Math.PI / 2.8;
-    rightArm.rotation.y = -0.25;
-    this.group.add(rightArm);
+    rightArm.rotation.x = Math.PI / 2.8;
+    rightArm.rotation.y = 0.25;
+    this.visualWrapper.add(rightArm);
 
-    // SMG in hands
+    // SMG in hands pointing towards -Z (forward aim)
     const gunBodyGeo = new BoxGeometry(0.07, 0.09, 0.32);
     const gun = new Mesh(gunBodyGeo, gunMat);
-    gun.position.set(0.16, 1.05, 0.38);
-    this.group.add(gun);
+    gun.position.set(0.16, 1.05, -0.38);
+    this.visualWrapper.add(gun);
 
     const magGeo = new BoxGeometry(0.04, 0.12, 0.06);
     const mag = new Mesh(magGeo, vestMat);
-    mag.position.set(0.16, 0.94, 0.35);
-    this.group.add(mag);
+    mag.position.set(0.16, 0.94, -0.35);
+    this.visualWrapper.add(mag);
 
     scene.add(this.group);
   }
@@ -192,13 +257,14 @@ export class RemotePlayer {
       this.group.position.lerp(this.targetPos, t);
     }
 
+    // Exact heading interpolation
     let diff = this.targetYaw - this.currentYaw;
     while (diff < -Math.PI) diff += Math.PI * 2;
     while (diff > Math.PI) diff -= Math.PI * 2;
     this.currentYaw += diff * Math.min(1.0, delta * 22);
     this.group.rotation.y = this.currentYaw;
 
-    // Detect if remote player is crouching (feet Y < -0.3 relative to normal standing)
+    // Detect if remote player is crouching
     const isCrouched = this.group.position.y < -0.25;
     if (isCrouched) {
       this.bodyMesh.scale.set(1.0, 0.75, 1.0);
@@ -220,7 +286,7 @@ export class RemotePlayer {
       const legSwing = Math.sin(this.walkCycle) * 0.45;
       this.leftLeg.rotation.x = legSwing;
       this.rightLeg.rotation.x = -legSwing;
-      this.leftArm.rotation.x = -Math.PI / 4 + legSwing * 0.25;
+      this.leftArm.rotation.x = Math.PI / 4 + legSwing * 0.25;
       if (!isCrouched) {
         this.bodyMesh.position.y = 0.94 + Math.abs(Math.sin(this.walkCycle * 2)) * 0.03;
       }
@@ -233,7 +299,22 @@ export class RemotePlayer {
     }
   }
 
+  setName(newName: string) {
+    if (this.name === newName) return;
+    this.name = newName;
+    this.group.remove(this.nameSprite);
+    if (this.nameSprite.material.map) this.nameSprite.material.map.dispose();
+    this.nameSprite.material.dispose();
+    this.nameSprite = createNameSprite(newName);
+    this.nameSprite.position.set(0, 1.85, 0);
+    this.group.add(this.nameSprite);
+  }
+
   destroy(scene: Scene) {
+    if (this.nameSprite) {
+      if (this.nameSprite.material.map) this.nameSprite.material.map.dispose();
+      this.nameSprite.material.dispose();
+    }
     scene.remove(this.group);
   }
 }

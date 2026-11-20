@@ -18,8 +18,12 @@ const networkStatusText = document.getElementById('network-status-text') as HTML
 const matchTimerPill = document.getElementById('match-timer-pill') as HTMLElement;
 const playerCountPill = document.getElementById('player-count-pill') as HTMLElement;
 const playerNameInput = document.getElementById('player-name-input') as HTMLInputElement;
+const playerSelfTag = document.getElementById('player-self-tag') as HTMLElement;
 const leaderboardRows = document.getElementById('leaderboard-rows') as HTMLElement;
 const healthVal = document.getElementById('health-val') as HTMLElement;
+const healthBarFill = document.getElementById('health-bar-fill') as HTMLElement;
+const weaponName = document.getElementById('weapon-name') as HTMLElement;
+const weaponDesc = document.getElementById('weapon-desc') as HTMLElement;
 const grenadeVal = document.getElementById('grenade-val') as HTMLElement;
 const damageFlash = document.getElementById('damage-flash') as HTMLElement;
 const hitIndicator = document.getElementById('hit-indicator') as HTMLElement;
@@ -57,6 +61,9 @@ camera.position.set(initialSpawn.x, 1.6, initialSpawn.z);
 // Saved credentials & Name
 const savedName = localStorage.getItem('ofg_player_name') || 'Agent-' + Math.floor(100 + Math.random() * 900);
 playerNameInput.value = savedName;
+if (playerSelfTag) {
+  playerSelfTag.textContent = savedName;
+}
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -115,11 +122,20 @@ function showDamageFlash(attackerPos?: { x: number; z: number }) {
 }
 
 function updateHealthUI() {
-  healthVal.textContent = Math.max(0, playerHealth).toString();
-  if (playerHealth <= 30) {
-    healthVal.classList.add('health-low');
-  } else {
-    healthVal.classList.remove('health-low');
+  const hp = Math.max(0, Math.min(100, playerHealth));
+  healthVal.textContent = `${hp} HP`;
+  if (healthBarFill) {
+    healthBarFill.style.width = `${hp}%`;
+    healthBarFill.className = 'health-bar-fill';
+    if (hp <= 30) {
+      healthBarFill.classList.add('bar-danger');
+      healthVal.style.color = 'var(--accent-red)';
+    } else if (hp <= 60) {
+      healthBarFill.classList.add('bar-warning');
+      healthVal.style.color = '#fbbf24';
+    } else {
+      healthVal.style.color = 'var(--accent-emerald)';
+    }
   }
 }
 
@@ -228,8 +244,25 @@ const network = new NetworkManager(
   (newRemainingSec) => {
     matchRemainingSeconds = newRemainingSec;
     updateTimerDisplay();
+  },
+  (isHost) => {
+    updateHostUI(isHost);
   }
 );
+
+function updateHostUI(isHost: boolean) {
+  if (isHost) {
+    btnEndGame.innerHTML = '<span>End Match</span>';
+    modalBtnEnd.innerHTML = '<span>End Match</span>';
+    btnEndGame.title = 'Conclude match for all players in this arena';
+    modalBtnEnd.title = 'Conclude match for all players in this arena';
+  } else {
+    btnEndGame.innerHTML = '<span>Exit Game</span>';
+    modalBtnEnd.innerHTML = '<span>Exit Game</span>';
+    btnEndGame.title = 'Leave this match and return to menu';
+    modalBtnEnd.title = 'Leave this match and return to menu';
+  }
+}
 
 function handlePlayerDeath(attackerName: string, attackerId: string) {
   isPlayerDead = true;
@@ -288,18 +321,31 @@ const controls = setupInput(
     }
   }
 );
-const weapon = new WeaponSystem(camera, scene, office, network);
+const weapon = new WeaponSystem(camera, scene, office, network, (gun, index) => {
+  if (weaponName) weaponName.textContent = gun.name;
+  if (weaponDesc) {
+    const rateText = index === 0 ? 'RAPID' : (index === 1 ? 'BALANCED' : 'HEAVY BOLT');
+    weaponDesc.innerHTML = `&infin; AMMO &bull; ${gun.dmg} DMG &bull; ${rateText}`;
+  }
+});
 
-// End Game button handler
-const handleEndGame = (e: Event) => {
+// End Game / Exit Game button handler
+const handleEndOrExitGame = async (e: Event) => {
   e.stopPropagation();
-  if (confirm('Are you sure you want to conclude the match for all players?')) {
-    network.sendEndMatch('manual');
-    displayMatchOver(network.localName, 'manual');
+  if (network.isHost) {
+    if (confirm('Are you sure you want to end the match for everyone in this arena?')) {
+      network.sendEndMatch('manual');
+      displayMatchOver(network.localName, 'manual');
+    }
+  } else {
+    if (confirm('Are you sure you want to exit this game?')) {
+      await network.leave();
+      window.location.reload();
+    }
   }
 };
-btnEndGame.addEventListener('click', handleEndGame);
-modalBtnEnd.addEventListener('click', handleEndGame);
+btnEndGame.addEventListener('click', handleEndOrExitGame);
+modalBtnEnd.addEventListener('click', handleEndOrExitGame);
 
 // Invite link button handler
 const handleInvite = (e: Event) => {
@@ -345,6 +391,9 @@ playerNameInput.addEventListener('change', () => {
   const newName = playerNameInput.value.trim();
   if (newName) {
     localStorage.setItem('ofg_player_name', newName);
+    if (playerSelfTag) {
+      playerSelfTag.textContent = newName;
+    }
     network.setName(newName);
   }
 });

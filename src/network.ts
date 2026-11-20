@@ -7,6 +7,7 @@ export interface PlayerState {
   id: string;
   name: string;
   color: number;
+  joinedAt?: number;
 }
 
 export interface MatchScoreEntry {
@@ -22,12 +23,15 @@ export class NetworkManager {
   private channel: RealtimeChannel | null = null;
   public localId: string;
   public localName: string;
+  public joinedAt: number;
+  public isHost = false;
   public isConnected = false;
   private scene: Scene;
   private remotePlayers = new Map<string, RemotePlayer>();
   private matchScores = new Map<string, MatchScoreEntry>();
 
   private onPlayerCountChange?: (count: number) => void;
+  private onHostStatusChange?: (isHost: boolean) => void;
   private onLocalDamaged?: (amount: number, attackerName: string, attackerId: string, attackerPos?: { x: number; z: number }) => void;
   private onKillFeed?: (killer: string, victim: string) => void;
   private onLeaderboardUpdate?: (leaderboard: MatchScoreEntry[]) => void;
@@ -42,15 +46,18 @@ export class NetworkManager {
     onKillFeed?: (killer: string, victim: string) => void,
     onLeaderboardUpdate?: (leaderboard: MatchScoreEntry[]) => void,
     onMatchEnded?: (enderName: string, reason?: string) => void,
-    onTimerSync?: (remainingSec: number) => void
+    onTimerSync?: (remainingSec: number) => void,
+    onHostStatusChange?: (isHost: boolean) => void
   ) {
     this.scene = scene;
+    this.joinedAt = Date.now();
     this.onPlayerCountChange = onPlayerCountChange;
     this.onLocalDamaged = onLocalDamaged;
     this.onKillFeed = onKillFeed;
     this.onLeaderboardUpdate = onLeaderboardUpdate;
     this.onMatchEnded = onMatchEnded;
     this.onTimerSync = onTimerSync;
+    this.onHostStatusChange = onHostStatusChange;
     this.localId = 'usr_' + Math.random().toString(36).substring(2, 9);
     this.localName = initialName || 'Agent-' + this.localId.substring(4, 7).toUpperCase();
 
@@ -73,7 +80,8 @@ export class NetworkManager {
       this.channel.track({
         id: this.localId,
         name: this.localName,
-        color: 0x3b82f6
+        color: 0x3b82f6,
+        joinedAt: this.joinedAt
       });
       this.syncPlayerProfileToDB();
       this.notifyLeaderboardChange();
@@ -106,6 +114,28 @@ export class NetworkManager {
         const state = this.channel?.presenceState() || {};
         const activeIds = new Set<string>();
 
+        // Identify oldest player (Host) based on joinedAt timestamp / deterministic id
+        let oldestTime = this.joinedAt;
+        let oldestId = this.localId;
+
+        for (const key of Object.keys(state)) {
+          const presences = state[key] as unknown as PlayerState[];
+          if (presences && presences.length > 0) {
+            const data = presences[0];
+            const pTime = data.joinedAt || 0;
+            if (pTime > 0 && (pTime < oldestTime || (pTime === oldestTime && key < oldestId))) {
+              oldestTime = pTime;
+              oldestId = key;
+            }
+          }
+        }
+
+        const wasHost = this.isHost;
+        this.isHost = (oldestId === this.localId);
+        if (wasHost !== this.isHost) {
+          this.onHostStatusChange?.(this.isHost);
+        }
+
         for (const key of Object.keys(state)) {
           if (key === this.localId) continue;
           activeIds.add(key);
@@ -118,7 +148,7 @@ export class NetworkManager {
               player = new RemotePlayer(key, data.name || 'Agent', this.scene, data.color || 0xd97706);
               this.remotePlayers.set(key, player);
             } else if (data.name) {
-              player.name = data.name;
+              player.setName(data.name);
             }
 
             if (!this.matchScores.has(key)) {
@@ -262,7 +292,8 @@ export class NetworkManager {
           await this.channel?.track({
             id: this.localId,
             name: this.localName,
-            color: 0x3b82f6
+            color: 0x3b82f6,
+            joinedAt: this.joinedAt
           });
           this.syncPlayerProfileToDB();
           this.notifyLeaderboardChange();
@@ -457,6 +488,17 @@ export class NetworkManager {
   public update(delta: number) {
     for (const player of this.remotePlayers.values()) {
       player.updateInterpolation(delta);
+    }
+  }
+
+  public async leave() {
+    if (this.channel) {
+      try {
+        await this.channel.untrack();
+        await this.channel.unsubscribe();
+      } catch {
+        // ignore
+      }
     }
   }
 
