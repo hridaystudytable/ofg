@@ -27,6 +27,11 @@ const weaponDesc = document.getElementById('weapon-desc') as HTMLElement;
 const grenadeVal = document.getElementById('grenade-val') as HTMLElement;
 const damageFlash = document.getElementById('damage-flash') as HTMLElement;
 const hitIndicator = document.getElementById('hit-indicator') as HTMLElement;
+const crosshair = document.getElementById('crosshair') as HTMLElement;
+const scopeContainer = document.getElementById('scope-container') as HTMLElement;
+const scopeRedDot = document.getElementById('scope-reddot') as HTMLElement;
+const scopeHolo = document.getElementById('scope-holo') as HTMLElement;
+const scopeSniper = document.getElementById('scope-sniper') as HTMLElement;
 const killFeed = document.getElementById('kill-feed') as HTMLElement;
 const deathScreen = document.getElementById('death-screen') as HTMLElement;
 const deathReason = document.getElementById('death-reason') as HTMLElement;
@@ -182,7 +187,7 @@ function displayMatchOver(enderName: string, reason?: string) {
   if (isLocalWinner) {
     resultBanner.textContent = 'VICTORY';
     resultBanner.className = 'banner-victory';
-    matchOverSubtitle.textContent = reason === 'manual' 
+    matchOverSubtitle.textContent = reason === 'manual'
       ? `Match concluded by ${enderName}. You finished #1 as Champion!`
       : `5-minute match expired! You finished #1 as Champion!`;
   } else {
@@ -213,6 +218,20 @@ function displayMatchOver(enderName: string, reason?: string) {
 
   matchOverScreen.style.display = 'flex';
   blocker.style.display = 'none';
+}
+
+function updateScopeUI() {
+  if (weapon.isAiming) {
+    if (crosshair) crosshair.style.opacity = '0';
+    if (scopeContainer) scopeContainer.style.opacity = '1';
+
+    if (scopeRedDot) scopeRedDot.style.display = (weapon.currentGunIndex === 0) ? 'flex' : 'none';
+    if (scopeHolo) scopeHolo.style.display = (weapon.currentGunIndex === 1) ? 'flex' : 'none';
+    if (scopeSniper) scopeSniper.style.display = (weapon.currentGunIndex === 2) ? 'flex' : 'none';
+  } else {
+    if (crosshair) crosshair.style.opacity = '1';
+    if (scopeContainer) scopeContainer.style.opacity = '0';
+  }
 }
 
 // Multiplayer Network Setup
@@ -427,6 +446,7 @@ function animate(currentTime: number) {
 
   if (!isPlayerDead && !isMatchOver) {
     controls.setAiming(weapon.isAiming);
+    updateScopeUI();
     controls.update(delta, (nextPos) => {
       return office.isWalkable(nextPos.x, nextPos.z, 0.35);
     });

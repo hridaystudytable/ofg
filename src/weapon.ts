@@ -434,7 +434,11 @@ export class WeaponSystem {
     }
 
     // Smooth Gun Position transition (Hip vs ADS)
-    const targetGunPos = this.isAiming ? this.adsGunPos : this.baseGunPos;
+    // For Sniper (index 2), lower the gun model when fully scoped so only the mil-dot reticle view is visible
+    let targetGunPos = this.isAiming ? this.adsGunPos : this.baseGunPos;
+    if (this.isAiming && this.currentGunIndex === 2) {
+      targetGunPos = new Vector3(0, -0.6, -0.38); // Tucked away under sniper scope lens
+    }
     const lerpSpeed = Math.min(1.0, delta * 20);
     this.gunGroup.position.lerp(targetGunPos, lerpSpeed);
 
